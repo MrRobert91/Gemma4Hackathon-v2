@@ -1,0 +1,22 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+
+
+@dataclass(slots=True)
+class Settings:
+    app_name: str = "EyeSpeak Gemma API"
+    allowed_origins: list[str] | None = None
+    tts_provider: str = os.getenv("TTS_PROVIDER", "mock")
+    profile_db_path: str = os.getenv("PROFILE_DB_PATH", "data/profiles.db")
+
+    @classmethod
+    def from_env(cls) -> "Settings":
+        raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
+        origins = None if raw_origins.strip() == "*" else [item.strip() for item in raw_origins.split(",") if item.strip()]
+        return cls(
+            allowed_origins=origins,
+            tts_provider=os.getenv("TTS_PROVIDER", "mock"),
+            profile_db_path=os.getenv("PROFILE_DB_PATH", "data/profiles.db"),
+        )
