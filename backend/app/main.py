@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.config import Settings
-from app.services.gemma import build_gemma_reranker
+from app.services.gemma import BaseGemmaReranker, RerankRequest, RerankResponse, build_gemma_reranker
 from app.services.predictor import PredictionRequest, PredictionResponse, SuggestionEngine
 from app.services.profiles import ProfilePreferences, SqliteProfileStore, UserProfile
 from app.services.session_store import InMemorySessionStore, Session, SessionSnapshot
@@ -78,6 +78,7 @@ def create_app(
     tts_provider: BaseTTSProvider | None = None,
     session_store: InMemorySessionStore | None = None,
     profile_store: SqliteProfileStore | None = None,
+    gemma_reranker: BaseGemmaReranker | None = None,
 ) -> FastAPI:
     app_settings = settings or Settings.from_env()
     app = FastAPI(title=app_settings.app_name, lifespan=lifespan)
@@ -90,7 +91,44 @@ def create_app(
         allow_headers=["*"],
     )
 
-    prediction_engine = engine or build_default_engine()
+    reranker = gemma_reranker or build_gemma_reranker()
+    prediction_engine = engine or SuggestionEngine(
+        global_phrases=[
+            "necesito ayuda",
+            "quiero agua",
+            "quiero descansar",
+            "hola",
+            "gracias",
+            "por favor",
+            "me duele",
+            "quiero hablar con mi familia",
+        ],
+        domain_vocabulary=[
+            "agua",
+            "ahora",
+            "ayuda",
+            "baño",
+            "borrar",
+            "comer",
+            "descansar",
+            "dolor",
+            "familia",
+            "gracias",
+            "hablar",
+            "hola",
+            "medicina",
+            "necesito",
+            "por",
+            "favor",
+            "quiero",
+            "sí",
+            "no",
+        ],
+        reranker=reranker,
+    )
+    if engine is None:
+        prediction_engine.learn_phrase("demo", "quiero agua")
+        prediction_engine.learn_phrase("demo", "quiero ayuda")
     sessions = session_store or InMemorySessionStore()
     provider = tts_provider or build_tts_provider(app_settings.tts_provider)
     profiles = profile_store or SqliteProfileStore(Path(app_settings.profile_db_path))
@@ -103,6 +141,15 @@ def create_app(
     def predict(payload: PredictionRequest) -> PredictionResponse:
         profiles.hydrate_engine(prediction_engine, payload.user_id)
         return prediction_engine.predict(payload)
+
+    @app.post("/api/gemma/rerank", response_model=RerankResponse)
+    def gemma_rerank(payload: RerankRequest) -> RerankResponse:
+        ordered_candidates = reranker.rerank(payload)
+        return RerankResponse(
+            ordered_candidates=ordered_candidates,
+            provider=reranker.provider_name,
+            model=reranker.model_name,
+        )
 
     @app.post("/api/tts", response_model=TTSResult)
     def synthesize(payload: TTSRequest) -> TTSResult:

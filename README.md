@@ -52,10 +52,29 @@ El backend ya soporta:
 ### Proveedores Gemma soportados
 
 - `GEMMA_PROVIDER=none`: sin reranking, modo demo
-- `GEMMA_PROVIDER=openai_compat`: endpoint OpenAI-compatible sirviendo Gemma
+- `GEMMA_PROVIDER=openrouter`: OpenRouter con un modelo Gemma expuesto vía API OpenAI-compatible
+- `GEMMA_PROVIDER=openai_compat`: endpoint OpenAI-compatible propio sirviendo Gemma
 - `GEMMA_PROVIDER=transformers`: carga local con Hugging Face Transformers
 
-### Activar Gemma en Docker
+### Activar Gemma con OpenRouter
+
+Configura `backend/.env` así:
+
+```env
+GEMMA_PROVIDER=openrouter
+OPENROUTER_API_KEY=tu_clave
+OPENROUTER_MODEL_ID=google/gemma-4-26b-a4b-it:free
+OPENROUTER_SITE_URL=http://localhost:3000
+OPENROUTER_APP_NAME=EyeSpeak Gemma
+```
+
+Luego levanta la stack:
+
+```bash
+docker compose up --build
+```
+
+### Activar Gemma local con Transformers
 
 ```bash
 set ENABLE_GEMMA=true
@@ -67,7 +86,7 @@ docker compose up --build
 
 Antes de usar la ruta `transformers`, acepta la licencia del modelo Gemma correspondiente en Hugging Face y expón `HF_TOKEN` si el entorno no tiene sesión previa.
 
-### Conectar a un endpoint local compatible
+### Conectar a un endpoint OpenAI-compatible propio
 
 ```bash
 set GEMMA_PROVIDER=openai_compat
