@@ -1,40 +1,34 @@
+import { calibrationPointPercentages } from "../lib/calibration";
+
 type CalibrationOverlayProps = {
   activeIndex: number;
   total: number;
-  onNext: (x: number, y: number) => void;
+  progress: number;
 };
 
-const points = [
-  { x: 10, y: 10 },
-  { x: 50, y: 10 },
-  { x: 90, y: 10 },
-  { x: 10, y: 50 },
-  { x: 50, y: 50 },
-  { x: 90, y: 50 },
-  { x: 10, y: 90 },
-  { x: 50, y: 90 },
-  { x: 90, y: 90 },
-];
+export function CalibrationOverlay({ activeIndex, total, progress }: CalibrationOverlayProps) {
+  const remainingSeconds = Math.max(0, 5 - progress * 5);
 
-export function CalibrationOverlay({ activeIndex, total, onNext }: CalibrationOverlayProps) {
   return (
     <div className="calibration-overlay" aria-label="Calibración">
       <div className="calibration-copy">
         <p className="eyebrow">Calibración</p>
         <p>
-          Punto {activeIndex + 1} de {total}. Mira el punto y pulsa para registrar esa posición.
+          Punto {activeIndex + 1} de {total}. Mantén la mirada fija sobre el punto activo. El avance es automático.
         </p>
+        <p className="calibration-copy__hint">
+          Revisa la previsualización de la webcam arriba a la derecha: tu cara debe verse centrada y la malla/caja deben seguirla.
+        </p>
+        <p className="calibration-copy__meta">Tiempo restante: {remainingSeconds.toFixed(1)} s</p>
+        <div className="calibration-progress" aria-hidden="true">
+          <span style={{ transform: `scaleX(${progress})` }} />
+        </div>
       </div>
-      {points.map((point, index) => (
-        <button
+      {calibrationPointPercentages.map((point, index) => (
+        <div
           key={`${point.x}-${point.y}`}
-          type="button"
           className={`calibration-point${index === activeIndex ? " calibration-point--active" : ""}`}
           style={{ left: `${point.x}%`, top: `${point.y}%` }}
-          onClick={(event) => {
-            const target = event.currentTarget.getBoundingClientRect();
-            onNext(target.left + target.width / 2, target.top + target.height / 2);
-          }}
           aria-label={`Punto de calibración ${index + 1}`}
         />
       ))}

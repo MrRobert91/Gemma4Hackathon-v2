@@ -8,9 +8,9 @@ export function CalibrationPanel({ calibrated, onCalibrate }: CalibrationPanelPr
     <section className="calibration-panel">
       <div>
         <p className="eyebrow">Seguimiento ocular</p>
-        <h2>{calibrated ? "Calibración activa" : "Calibra antes de escribir"}</h2>
+        <h2>{calibrated ? "Calibración lista" : "Calibra antes de escribir"}</h2>
         <p>
-          Mira los puntos de calibración y usa un click asistido si estás en modo webcam. Para pruebas rápidas puedes cambiar a modo puntero.
+          Mantén la mirada fija sobre cada punto hasta que el sistema avance solo. Revisa la vista de cámara para confirmar que aparecen la malla facial y los iris.
         </p>
       </div>
       <button type="button" className="primary-button" onClick={onCalibrate}>

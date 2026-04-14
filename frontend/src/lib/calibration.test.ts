@@ -1,7 +1,9 @@
 import {
+  averageGazePoints,
   applyCalibration,
   buildCalibrationModel,
   identityCalibration,
+  resolveCalibrationTarget,
   type CalibrationSample,
 } from "./calibration";
 
@@ -24,5 +26,25 @@ describe("calibration model", () => {
     expect(corrected.x).toBeCloseTo(285, 0);
     expect(corrected.y).toBeCloseTo(305, 0);
     expect(model.score).toBeGreaterThan(0.9);
+  });
+
+  it("averages gaze samples to reduce noise during timed calibration", () => {
+    const average = averageGazePoints([
+      { x: 100, y: 210 },
+      { x: 110, y: 200 },
+      { x: 120, y: 190 },
+    ]);
+
+    expect(average).toEqual({ x: 110, y: 200 });
+  });
+
+  it("returns null when there are no gaze samples to average", () => {
+    expect(averageGazePoints([])).toBeNull();
+  });
+
+  it("maps calibration points to viewport coordinates", () => {
+    expect(resolveCalibrationTarget(0, 1000, 800)).toEqual({ x: 100, y: 80 });
+    expect(resolveCalibrationTarget(4, 1000, 800)).toEqual({ x: 500, y: 400 });
+    expect(resolveCalibrationTarget(8, 1000, 800)).toEqual({ x: 900, y: 720 });
   });
 });

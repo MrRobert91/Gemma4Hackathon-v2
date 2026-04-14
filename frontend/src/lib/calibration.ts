@@ -1,5 +1,17 @@
 import type { GazePoint } from "../types";
 
+export const calibrationPointPercentages = [
+  { x: 10, y: 10 },
+  { x: 50, y: 10 },
+  { x: 90, y: 10 },
+  { x: 10, y: 50 },
+  { x: 50, y: 50 },
+  { x: 90, y: 50 },
+  { x: 10, y: 90 },
+  { x: 50, y: 90 },
+  { x: 90, y: 90 },
+] as const;
+
 export type CalibrationSample = {
   raw: GazePoint;
   target: GazePoint;
@@ -68,6 +80,25 @@ export function buildCalibrationModel(samples: CalibrationSample[]): Calibration
     scaleY: yFit.scale,
     offsetY: yFit.offset,
     score: Math.max(0, 1 - averageError / 150),
+  };
+}
+
+export function averageGazePoints(points: GazePoint[]): GazePoint | null {
+  if (points.length === 0) {
+    return null;
+  }
+
+  return {
+    x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+    y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+  };
+}
+
+export function resolveCalibrationTarget(index: number, viewportWidth: number, viewportHeight: number): GazePoint {
+  const point = calibrationPointPercentages[Math.min(Math.max(index, 0), calibrationPointPercentages.length - 1)];
+  return {
+    x: (point.x / 100) * viewportWidth,
+    y: (point.y / 100) * viewportHeight,
   };
 }
 

@@ -1,12 +1,14 @@
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useReducer, useState } from "react";
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import { CalibrationOverlay } from "./components/CalibrationOverlay";
 import { CalibrationPanel } from "./components/CalibrationPanel";
+import { GazeDiagnosticsPanel } from "./components/GazeDiagnosticsPanel";
 import { QuickPhrases } from "./components/QuickPhrases";
 import { SuggestionBar } from "./components/SuggestionBar";
 import { VirtualKeyboard } from "./components/VirtualKeyboard";
+import { useCameraStream } from "./hooks/useCameraStream";
 import { useDwellSelection } from "./hooks/useDwellSelection";
-import { useEyeTracking } from "./hooks/useEyeTracking";
+import { useGazeProvider } from "./hooks/useGazeProvider";
 import {
   commitSessionPhrase,
   fetchPredictions,
@@ -17,11 +19,27 @@ import {
   updateSessionText,
 } from "./lib/api";
 import { applyAction, createInitialComposerState } from "./lib/appState";
-import { applyCalibration, buildCalibrationModel, identityCalibration, type CalibrationSample } from "./lib/calibration";
-import type { PredictionResponse, UserProfile } from "./types";
+import {
+  applyCalibrationToFrame,
+  averageFeatureVectors,
+  buildCalibrationModelV2,
+  createEmptyCalibrationModelV2,
+  isCalibrationWindowStable,
+  type CalibrationModelV2,
+} from "./lib/gazeCalibrationV2";
+import {
+  calibrationPointPercentages,
+  resolveCalibrationTarget,
+} from "./lib/calibration";
+import { type ProviderMode } from "./lib/gazeProvider";
+import type { CalibrationSampleV2, GazeFeatureVector, GazeFrame, GazePoint, PredictionResponse, UserProfile } from "./types";
 
 const defaultQuickPhrases = ["necesito ayuda", "quiero agua", "me duele"];
 const demoUserId = "demo-user";
+const calibrationHoldMs = 4000;
+const calibrationSampleIntervalMs = 100;
+const calibrationStabilityRadius = 48;
+const minimumCalibrationConfidence = 0.45;
 
 function keyValueToAction(value: string) {
   switch (value) {
@@ -36,9 +54,28 @@ function keyValueToAction(value: string) {
   }
 }
 
+function averagePoints(points: GazePoint[]) {
+  if (points.length === 0) {
+    return null;
+  }
+
+  return {
+    x: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+    y: points.reduce((sum, point) => sum + point.y, 0) / points.length,
+  };
+}
+
+function averageQuality(values: number[]) {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
 export default function App() {
   const [composerState, dispatch] = useReducer(applyAction, undefined, createInitialComposerState);
-  const [providerMode, setProviderMode] = useState<"webgazer" | "pointer">("webgazer");
+  const [providerMode, setProviderMode] = useState<ProviderMode>("mediapipe");
   const [dwellMs, setDwellMs] = useState(850);
   const [highContrast, setHighContrast] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -51,17 +88,73 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState("Listo para calibrar.");
   const [calibrationActive, setCalibrationActive] = useState(false);
   const [calibrationIndex, setCalibrationIndex] = useState(0);
-  const [calibrationSamples, setCalibrationSamples] = useState<CalibrationSample[]>([]);
+  const [calibrationSamples, setCalibrationSamples] = useState<CalibrationSampleV2[]>([]);
   const [calibrationScore, setCalibrationScore] = useState(0);
-  const [calibrationModel, setCalibrationModel] = useState(identityCalibration());
+  const [calibrationModel, setCalibrationModel] = useState<CalibrationModelV2>(createEmptyCalibrationModelV2());
+  const [calibrationProgress, setCalibrationProgress] = useState(0);
   const [audioReady, setAudioReady] = useState(false);
 
+  const overlayRef = useRef<HTMLCanvasElement | null>(null);
+  const frameRef = useRef<GazeFrame | null>(null);
+  const calibrationSamplesRef = useRef<CalibrationSampleV2[]>([]);
+  const pointWindowRef = useRef<GazePoint[]>([]);
+  const featureWindowRef = useRef<GazeFeatureVector[]>([]);
+  const qualityWindowRef = useRef<number[]>([]);
+
   const deferredText = useDeferredValue(composerState.text);
-  const { point: rawPoint, ready, providerLabel, error } = useEyeTracking({ mode: providerMode });
-  const correctedPoint = useMemo(
-    () => (rawPoint ? applyCalibration(rawPoint, calibrationModel) : null),
-    [calibrationModel, rawPoint],
-  );
+  const camera = useCameraStream({ enabled: providerMode === "mediapipe" });
+  const {
+    frame,
+    ready,
+    providerLabel,
+    error,
+    stage,
+    debugLogs,
+  } = useGazeProvider({
+    mode: providerMode,
+    enabled: providerMode === "pointer" || camera.ready,
+    videoRef: camera.videoRef,
+    overlayRef,
+  });
+
+  const rawPoint = frame?.rawPoint ?? null;
+  const correctedPoint = useMemo(() => {
+    if (!frame) {
+      return null;
+    }
+    if (frame.features && calibrationModel.sampleCount >= 4) {
+      return applyCalibrationToFrame(frame.features, calibrationModel);
+    }
+    return rawPoint;
+  }, [calibrationModel, frame, rawPoint]);
+
+  const actionablePoint = useMemo(() => {
+    if (
+      calibrationActive ||
+      !frame ||
+      !correctedPoint ||
+      !frame.irisDetected ||
+      frame.confidence < minimumCalibrationConfidence
+    ) {
+      return null;
+    }
+    return correctedPoint;
+  }, [calibrationActive, correctedPoint, frame]);
+
+  const displayPoint = useMemo(() => {
+    if (calibrationActive) {
+      return rawPoint;
+    }
+    return correctedPoint;
+  }, [calibrationActive, correctedPoint, rawPoint]);
+
+  useEffect(() => {
+    frameRef.current = frame;
+  }, [frame]);
+
+  useEffect(() => {
+    calibrationSamplesRef.current = calibrationSamples;
+  }, [calibrationSamples]);
 
   useEffect(() => {
     let cancelled = false;
@@ -119,7 +212,13 @@ export default function App() {
       dwell_ms: dwellMs,
       high_contrast: highContrast,
     }).then((nextProfile) => setProfile(nextProfile));
-  }, [dwellMs, highContrast]);
+  }, [dwellMs, highContrast, profile]);
+
+  useEffect(() => {
+    if (camera.error) {
+      setStatusMessage(`Webcam no disponible: ${camera.error}`);
+    }
+  }, [camera.error]);
 
   const handleKeyAction = useCallback((value: string) => {
     dispatch(keyValueToAction(value));
@@ -132,7 +231,12 @@ export default function App() {
   const allQuickPhrases = useMemo(() => {
     const profileQuickPhrases = profile?.quick_phrases ?? [];
     const unique = new Set<string>();
-    return [...predictions.quick_phrases.map((item) => item.text), ...profileQuickPhrases, ...composerState.recentPhrases, ...defaultQuickPhrases]
+    return [
+      ...predictions.quick_phrases.map((item) => item.text),
+      ...profileQuickPhrases,
+      ...composerState.recentPhrases,
+      ...defaultQuickPhrases,
+    ]
       .filter((item) => {
         if (unique.has(item)) {
           return false;
@@ -199,44 +303,120 @@ export default function App() {
   );
 
   const { focusedKeyId, dwellProgress, registerTarget, resetDwell } = useDwellSelection({
-    gazePoint: calibrationActive ? null : correctedPoint,
+    gazePoint: actionablePoint,
     dwellMs,
-    snapRadius: 48,
+    snapRadius: 64,
     onActivate: handleActivateTarget,
   });
 
-  const handleStartCalibration = () => {
+  const handleStartCalibration = useCallback(() => {
     setCalibrationActive(true);
     setCalibrationIndex(0);
     setCalibrationSamples([]);
+    calibrationSamplesRef.current = [];
+    pointWindowRef.current = [];
+    featureWindowRef.current = [];
+    qualityWindowRef.current = [];
+    setCalibrationProgress(0);
+    setCalibrationScore(0);
+    setCalibrationModel(createEmptyCalibrationModelV2());
+    setStatusMessage("Calibración automática iniciada. Mantén la mirada fija en cada punto hasta que avance.");
     resetDwell();
-  };
+  }, [resetDwell]);
 
-  const handleCalibrationPoint = (x: number, y: number) => {
-    window.webgazer?.recordScreenPosition?.(x, y, "click");
-    if (!rawPoint) {
-      setStatusMessage("No hay punto de mirada disponible todavía. Espera a que el proveedor esté listo.");
+  useEffect(() => {
+    if (!calibrationActive) {
       return;
     }
 
-    const nextSamples = [...calibrationSamples, { raw: rawPoint, target: { x, y } }];
-    setCalibrationSamples(nextSamples);
+    let startedAt = Date.now();
+    pointWindowRef.current = [];
+    featureWindowRef.current = [];
+    qualityWindowRef.current = [];
+    setCalibrationProgress(0);
 
-    if (calibrationIndex >= 8) {
-      const nextModel = buildCalibrationModel(nextSamples);
-      setCalibrationModel(nextModel);
-      setCalibrationScore(nextModel.score);
-      setCalibrationActive(false);
-      setStatusMessage(`Calibración completada. Precisión estimada: ${Math.round(nextModel.score * 100)}%.`);
-      return;
-    }
-    setCalibrationIndex((value) => value + 1);
-  };
+    const intervalId = window.setInterval(() => {
+      const currentFrame = frameRef.current;
+      if (
+        currentFrame?.rawPoint &&
+        currentFrame.features &&
+        currentFrame.irisDetected &&
+        !currentFrame.diagnostics.blink &&
+        currentFrame.confidence >= minimumCalibrationConfidence
+      ) {
+        pointWindowRef.current.push(currentFrame.rawPoint);
+        featureWindowRef.current.push(currentFrame.features);
+        qualityWindowRef.current.push(currentFrame.confidence);
+      }
+
+      const elapsedMs = Date.now() - startedAt;
+      const progress = Math.min(elapsedMs / calibrationHoldMs, 1);
+      setCalibrationProgress(progress);
+
+      if (elapsedMs < calibrationHoldMs) {
+        return;
+      }
+
+      const target = resolveCalibrationTarget(calibrationIndex, window.innerWidth, window.innerHeight);
+      const stable = isCalibrationWindowStable(pointWindowRef.current, calibrationStabilityRadius);
+      const averagedFeatures = averageFeatureVectors(featureWindowRef.current);
+      const averagedPoint = averagePoints(pointWindowRef.current);
+      const quality = averageQuality(qualityWindowRef.current);
+
+      pointWindowRef.current = [];
+      featureWindowRef.current = [];
+      qualityWindowRef.current = [];
+
+      const nextSamples =
+        stable && averagedFeatures && averagedPoint
+          ? [...calibrationSamplesRef.current, { features: averagedFeatures, target, quality }]
+          : calibrationSamplesRef.current;
+
+      calibrationSamplesRef.current = nextSamples;
+      setCalibrationSamples(nextSamples);
+
+      if (calibrationIndex >= calibrationPointPercentages.length - 1) {
+        const nextModel = buildCalibrationModelV2(nextSamples);
+        setCalibrationModel(nextModel);
+        setCalibrationScore(nextModel.score);
+        setCalibrationActive(false);
+        setCalibrationProgress(0);
+        if (nextSamples.length < 4) {
+          setStatusMessage(
+            "Calibración completada con datos insuficientes. Repite el proceso con mejor iluminación y mantén la mirada estable sobre los puntos.",
+          );
+          return;
+        }
+        setStatusMessage(`Calibración completada. Precisión estimada: ${Math.round(nextModel.score * 100)}%.`);
+        return;
+      }
+
+      setCalibrationIndex((value) => value + 1);
+      startedAt = Date.now();
+      if (!stable || !averagedFeatures) {
+        setStatusMessage(
+          `La muestra del punto ${calibrationIndex + 1} no fue estable. Continuando con el punto ${calibrationIndex + 2}.`,
+        );
+        return;
+      }
+      setStatusMessage(
+        `Calibración en curso. Punto ${calibrationIndex + 2} de ${calibrationPointPercentages.length}. Muestras válidas: ${nextSamples.length}.`,
+      );
+    }, calibrationSampleIntervalMs);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [calibrationActive, calibrationIndex]);
 
   return (
     <div className={`app-shell${highContrast ? " app-shell--contrast" : ""}`}>
       {calibrationActive ? (
-        <CalibrationOverlay activeIndex={calibrationIndex} total={9} onNext={handleCalibrationPoint} />
+        <CalibrationOverlay
+          activeIndex={calibrationIndex}
+          total={calibrationPointPercentages.length}
+          progress={calibrationProgress}
+        />
       ) : null}
 
       <header className="hero">
@@ -244,15 +424,15 @@ export default function App() {
           <p className="eyebrow">EyeSpeak Gemma</p>
           <h1>Escribe con la mirada. Habla con claridad.</h1>
           <p className="hero__lead">
-            MVP web para comunicación asistida con webcam, dwell selection, predicción contextual con Gemma y TTS.
+            MVP web para comunicación asistida con webcam, face mesh + iris, dwell selection, predicción contextual con Gemma y TTS.
           </p>
         </div>
 
         <div className="hero__controls">
           <label className="control-group">
             <span>Modo de entrada</span>
-            <select value={providerMode} onChange={(event) => setProviderMode(event.target.value as "webgazer" | "pointer")}>
-              <option value="webgazer">Webcam + WebGazer</option>
+            <select value={providerMode} onChange={(event) => setProviderMode(event.target.value as ProviderMode)}>
+              <option value="mediapipe">Webcam + MediaPipe</option>
               <option value="pointer">Simulación con puntero</option>
             </select>
           </label>
@@ -270,7 +450,10 @@ export default function App() {
 
       <main className="workspace">
         <section className="workspace-main">
-          <CalibrationPanel calibrated={!calibrationActive} onCalibrate={handleStartCalibration} />
+          <CalibrationPanel
+            calibrated={!calibrationActive && calibrationModel.sampleCount >= 4}
+            onCalibrate={handleStartCalibration}
+          />
 
           <section className="composer-panel">
             <header>
@@ -308,15 +491,41 @@ export default function App() {
         </section>
 
         <aside className="workspace-side">
+          <GazeDiagnosticsPanel
+            mode={providerMode === "pointer" ? "pointer" : "mediapipe"}
+            frame={frame}
+            videoRef={camera.videoRef}
+            overlayRef={overlayRef}
+            cameraReady={camera.ready}
+            cameraError={camera.error}
+          />
+
           <section className="status-card">
             <p className="eyebrow">Estado</p>
             <h3>{providerLabel}</h3>
             <ul>
               <li>{ready ? "Seguimiento listo" : "Inicializando proveedor"}</li>
-              <li>{error ?? "Sin errores detectados"}</li>
+              <li>Etapa: {stage}</li>
+              <li>{error ?? camera.error ?? "Sin errores detectados"}</li>
               <li>{statusMessage}</li>
               <li>Score de calibración: {Math.round(calibrationScore * 100)}%</li>
             </ul>
+          </section>
+
+          <section className="status-card status-card--debug">
+            <p className="eyebrow">Logs Eye Tracking</p>
+            <h3>Traza de arranque</h3>
+            {debugLogs.length > 0 ? (
+              <div className="debug-log-list">
+                {debugLogs.map((entry) => (
+                  <code key={entry} className="debug-log-entry">
+                    {entry}
+                  </code>
+                ))}
+              </div>
+            ) : (
+              <p className="debug-log-empty">Aún no hay logs disponibles.</p>
+            )}
           </section>
 
           <QuickPhrases
@@ -332,13 +541,31 @@ export default function App() {
             <ul>
               <li>Usa una webcam a la altura de los ojos.</li>
               <li>Mantén la cabeza estable durante la calibración.</li>
-              <li>Empieza en modo puntero si quieres validar la UI sin cámara.</li>
+              <li>Comprueba en la tarjeta de cámara que aparecen mesh, caja facial e iris.</li>
             </ul>
           </section>
         </aside>
       </main>
 
-      {correctedPoint ? <div className="gaze-cursor" style={{ transform: `translate(${correctedPoint.x}px, ${correctedPoint.y}px)` }} /> : null}
+      <div className="gaze-hud">
+        <strong>Seguimiento visual</strong>
+        <span>{calibrationModel.sampleCount >= 4 ? "calibrada" : calibrationActive ? "sin calibrar" : "sin calibrar"}</span>
+        <span>{ready ? providerLabel : "inicializando proveedor"}</span>
+        <span>
+          {displayPoint ? `X ${Math.round(displayPoint.x)} · Y ${Math.round(displayPoint.y)}` : "Esperando coordenadas de mirada"}
+        </span>
+        <span>
+          {frame?.irisDetected
+            ? `Confianza ${Math.round(frame.confidence * 100)}%`
+            : "Esperando landmarks de iris"}
+        </span>
+      </div>
+      {displayPoint ? (
+        <div className="gaze-cursor" style={{ transform: `translate(${displayPoint.x}px, ${displayPoint.y}px)` }}>
+          <span className="gaze-cursor__ring" />
+          <span className="gaze-cursor__dot" />
+        </div>
+      ) : null}
       {audioReady ? <div className="sr-only">Audio listo</div> : null}
     </div>
   );
