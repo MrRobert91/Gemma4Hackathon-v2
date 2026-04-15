@@ -134,6 +134,16 @@ function predictWithWeights(weights: number[], features: GazeFeatureVector) {
   return featureArray.reduce((sum, value, index) => sum + value * (weights[index] ?? 0), 0);
 }
 
+function getAxisSignal(features: GazeFeatureVector, axis: "x" | "y") {
+  if (axis === "x") {
+    const irisHorizontal = ((features.leftIrisX - 0.5) + (features.rightIrisX - 0.5)) / 2;
+    return -irisHorizontal - features.yaw * 0.35;
+  }
+
+  const irisVertical = ((features.leftIrisY - 0.5) + (features.rightIrisY - 0.5)) / 2;
+  return irisVertical;
+}
+
 function average(values: number[]) {
   if (values.length === 0) {
     return 0;
@@ -167,8 +177,8 @@ function buildAxisRangeCalibration(samples: CalibrationSampleV2[], weights: numb
     return null;
   }
 
-  const observedLow = average(lowEdgeSamples.map((sample) => predictWithWeights(weights, sample.features)));
-  const observedHigh = average(highEdgeSamples.map((sample) => predictWithWeights(weights, sample.features)));
+  const observedLow = average(lowEdgeSamples.map((sample) => getAxisSignal(sample.features, targetKey)));
+  const observedHigh = average(highEdgeSamples.map((sample) => getAxisSignal(sample.features, targetKey)));
   const observedMin = Math.min(observedLow, observedHigh);
   const observedMax = Math.max(observedLow, observedHigh);
 
@@ -224,13 +234,19 @@ export function applyCalibrationToFrame(
   model: CalibrationModelV2,
   options?: CalibrationApplicationOptions,
 ): GazePoint {
-  const basePoint = {
+  const regressionPoint = {
     x: predictWithWeights(model.weightsX, features),
     y: predictWithWeights(model.weightsY, features),
   };
+  const signalPoint = {
+    x: getAxisSignal(features, "x"),
+    y: getAxisSignal(features, "y"),
+  };
+  const rangedPoint = expandPointWithAxisRanges(signalPoint, model, options);
 
   return {
-    ...expandPointWithAxisRanges(basePoint, model, options),
+    x: model.axisRangeX ? rangedPoint.x : regressionPoint.x,
+    y: model.axisRangeY ? rangedPoint.y : regressionPoint.y,
   };
 }
 

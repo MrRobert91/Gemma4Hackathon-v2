@@ -616,10 +616,21 @@ export default function App() {
             <li>{error ?? camera.error ?? "Sin errores detectados"}</li>
             <li>{statusMessage}</li>
             <li>Score de calibracion: {Math.round(calibrationScore * 100)}%</li>
+            <li>Muestras de calibracion: {calibrationModel.sampleCount}</li>
             <li>{usePitchAssist ? "Pitch asistido activo" : "Pitch asistido desactivado"}</li>
             <li>{invertVerticalAxis ? "Eje vertical invertido" : "Eje vertical normal"}</li>
             <li>Sensibilidad X: {horizontalSensitivity.toFixed(2)}x</li>
             <li>Sensibilidad Y: {verticalSensitivity.toFixed(2)}x</li>
+            <li>
+              {calibrationModel.axisRangeX
+                ? `Rango X activo: ${Math.round(calibrationModel.axisRangeX.targetMin)}-${Math.round(calibrationModel.axisRangeX.targetMax)}`
+                : "Rango X no calibrado"}
+            </li>
+            <li>
+              {calibrationModel.axisRangeY
+                ? `Rango Y activo: ${Math.round(calibrationModel.axisRangeY.targetMin)}-${Math.round(calibrationModel.axisRangeY.targetMax)}`
+                : "Rango Y no calibrado"}
+            </li>
             <li>Estabilizacion: {stabilization}%</li>
           </ul>
         </section>
