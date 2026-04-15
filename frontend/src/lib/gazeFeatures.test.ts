@@ -1,4 +1,4 @@
-import { buildGazeFrameFromLandmarks, type FaceLandmark } from "./gazeFeatures";
+import { buildGazeFrameFromLandmarks, estimateRawScreenPoint, type FaceLandmark } from "./gazeFeatures";
 
 function createLandmarks(): FaceLandmark[] {
   return Array.from({ length: 478 }, () => ({ x: 0.5, y: 0.5, z: 0 }));
@@ -61,10 +61,10 @@ describe("gaze feature extraction", () => {
       leftEyeOpen: expect.any(Number),
       rightEyeOpen: expect.any(Number),
     });
-    expect(frame.rawPoint?.x).toBeGreaterThan(1000);
-    expect(frame.rawPoint?.x).toBeLessThan(1125);
+    expect(frame.rawPoint?.x).toBeGreaterThan(730);
+    expect(frame.rawPoint?.x).toBeLessThan(920);
     expect(frame.rawPoint?.y).toBeGreaterThan(500);
-    expect(frame.rawPoint?.y).toBeLessThan(560);
+    expect(frame.rawPoint?.y).toBeLessThan(640);
     expect(frame.confidence).toBeGreaterThan(0.75);
   });
 
@@ -121,5 +121,53 @@ describe("gaze feature extraction", () => {
 
     expect(frame.diagnostics.blink).toBe(true);
     expect(frame.confidence).toBeLessThan(0.5);
+  });
+
+  it("can disable pitch assistance to isolate iris-only vertical motion", () => {
+    const withPitch = estimateRawScreenPoint(
+      {
+        leftIrisX: 0.5,
+        leftIrisY: 0.56,
+        rightIrisX: 0.5,
+        rightIrisY: 0.56,
+        leftEyeOpen: 0.2,
+        rightEyeOpen: 0.2,
+        interocularDistance: 0.28,
+        faceCenterX: 0.5,
+        faceCenterY: 0.5,
+        faceWidth: 0.4,
+        faceHeight: 0.55,
+        yaw: 0,
+        pitch: 0.25,
+        roll: 0,
+      },
+      1000,
+      1000,
+      { usePitchAssist: true, pitchWeight: 0.4 },
+    );
+
+    const irisOnly = estimateRawScreenPoint(
+      {
+        leftIrisX: 0.5,
+        leftIrisY: 0.56,
+        rightIrisX: 0.5,
+        rightIrisY: 0.56,
+        leftEyeOpen: 0.2,
+        rightEyeOpen: 0.2,
+        interocularDistance: 0.28,
+        faceCenterX: 0.5,
+        faceCenterY: 0.5,
+        faceWidth: 0.4,
+        faceHeight: 0.55,
+        yaw: 0,
+        pitch: 0.25,
+        roll: 0,
+      },
+      1000,
+      1000,
+      { usePitchAssist: false, pitchWeight: 0.4 },
+    );
+
+    expect(withPitch.y).toBeGreaterThan(irisOnly.y);
   });
 });

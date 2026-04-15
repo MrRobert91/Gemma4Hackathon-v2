@@ -1,4 +1,4 @@
-import type { FaceBox, GazeFeatureVector, GazeFrame, HeadPose } from "../types";
+import type { FaceBox, GazeFeatureVector, GazeFrame, HeadPose, RawGazeMappingOptions } from "../types";
 
 export type FaceLandmark = {
   x: number;
@@ -13,6 +13,15 @@ type BuildGazeFrameOptions = {
   viewportWidth: number;
   viewportHeight: number;
   timestamp: number;
+  mappingOptions?: Partial<RawGazeMappingOptions>;
+};
+
+const defaultMappingOptions: RawGazeMappingOptions = {
+  horizontalGain: 3.1,
+  verticalGain: 2.4,
+  yawWeight: 0.45,
+  pitchWeight: 0.28,
+  usePitchAssist: true,
 };
 
 const LEFT_EYE_OUTER = 33;
@@ -177,14 +186,20 @@ export function estimateRawScreenPoint(
   features: GazeFeatureVector,
   viewportWidth: number,
   viewportHeight: number,
+  options?: Partial<RawGazeMappingOptions>,
 ) {
+  const mapping = { ...defaultMappingOptions, ...options };
+  const horizontalSignal = ((features.leftIrisX - 0.5) + (features.rightIrisX - 0.5)) / 2;
+  const verticalSignal = ((features.leftIrisY - 0.5) + (features.rightIrisY - 0.5)) / 2;
   const horizontal = clamp(
-    ((features.leftIrisX + features.rightIrisX) / 2 - 0.5) * 1.8 + 0.5 + features.yaw * 0.35,
+    0.5 - horizontalSignal * mapping.horizontalGain - features.yaw * mapping.yawWeight,
     0,
     1,
   );
   const vertical = clamp(
-    ((features.leftIrisY + features.rightIrisY) / 2 - 0.5) * 1.6 + 0.5 + features.pitch * 0.3,
+    0.5 +
+      verticalSignal * mapping.verticalGain +
+      (mapping.usePitchAssist ? features.pitch * mapping.pitchWeight : 0),
     0,
     1,
   );
@@ -202,6 +217,7 @@ export function buildGazeFrameFromLandmarks({
   viewportWidth,
   viewportHeight,
   timestamp,
+  mappingOptions,
 }: BuildGazeFrameOptions): GazeFrame {
   const faceDetected = landmarks.length > 0;
   const diagnostics = {
@@ -245,7 +261,8 @@ export function buildGazeFrameFromLandmarks({
   const blinkPenalty = blink ? 0.55 : 0;
   const rollPenalty = Math.min(Math.abs(features.roll) * 0.25, 0.15);
   const confidence = clamp(1 - faceScalePenalty - blinkPenalty - rollPenalty, 0, 1);
-  const rawPoint = confidence > 0 ? estimateRawScreenPoint(features, viewportWidth, viewportHeight) : null;
+  const rawPoint =
+    confidence > 0 ? estimateRawScreenPoint(features, viewportWidth, viewportHeight, mappingOptions) : null;
 
   return {
     timestamp,

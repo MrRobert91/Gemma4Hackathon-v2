@@ -95,3 +95,11 @@ export type CalibrationSampleV2 = {
   target: GazePoint;
   quality: number;
 };
+
+export type RawGazeMappingOptions = {
+  horizontalGain: number;
+  verticalGain: number;
+  yawWeight: number;
+  pitchWeight: number;
+  usePitchAssist: boolean;
+};

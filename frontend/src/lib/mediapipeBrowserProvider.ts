@@ -1,6 +1,6 @@
 import { FaceLandmarker, FilesetResolver, type FaceLandmarkerResult } from "@mediapipe/tasks-vision";
 
-import type { GazeFrame, GazePoint, GazeProviderStatus } from "../types";
+import type { GazeFrame, GazePoint, GazeProviderStatus, RawGazeMappingOptions } from "../types";
 import { buildGazeFrameFromLandmarks, type FaceLandmark } from "./gazeFeatures";
 import { drawGazeOverlay } from "./gazeOverlay";
 import type { GazeProvider } from "./gazeProvider";
@@ -9,6 +9,7 @@ type MediapipeBrowserProviderOptions = {
   videoElement: HTMLVideoElement;
   overlayElement?: HTMLCanvasElement | null;
   getViewportSize: () => { width: number; height: number };
+  getMappingOptions: () => Partial<RawGazeMappingOptions>;
   onFrame: (frame: GazeFrame) => void;
   onDebug: (message: string) => void;
 };
@@ -26,6 +27,7 @@ export class MediapipeBrowserProvider implements GazeProvider {
   private readonly videoElement: HTMLVideoElement;
   private readonly overlayElement?: HTMLCanvasElement | null;
   private readonly getViewportSize: () => { width: number; height: number };
+  private readonly getMappingOptions: () => Partial<RawGazeMappingOptions>;
   private readonly onFrame: (frame: GazeFrame) => void;
   private readonly onDebug: (message: string) => void;
   private sampleCounter = 0;
@@ -34,12 +36,14 @@ export class MediapipeBrowserProvider implements GazeProvider {
     videoElement,
     overlayElement,
     getViewportSize,
+    getMappingOptions,
     onFrame,
     onDebug,
   }: MediapipeBrowserProviderOptions) {
     this.videoElement = videoElement;
     this.overlayElement = overlayElement;
     this.getViewportSize = getViewportSize;
+    this.getMappingOptions = getMappingOptions;
     this.onFrame = onFrame;
     this.onDebug = onDebug;
   }
@@ -101,6 +105,7 @@ export class MediapipeBrowserProvider implements GazeProvider {
       viewportWidth: viewport.width,
       viewportHeight: viewport.height,
       timestamp: performance.now(),
+      mappingOptions: this.getMappingOptions(),
     });
 
     this.latestFrame = frame;

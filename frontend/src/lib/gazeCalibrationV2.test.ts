@@ -2,6 +2,7 @@ import {
   applyCalibrationToFrame,
   buildCalibrationModelV2,
   createEmptyCalibrationModelV2,
+  isFeatureWindowStable,
   isCalibrationWindowStable,
 } from "./gazeCalibrationV2";
 import type { CalibrationSampleV2, GazeFeatureVector } from "../types";
@@ -68,5 +69,23 @@ describe("feature-based calibration", () => {
 
     expect(isCalibrationWindowStable(stableWindow, 18)).toBe(true);
     expect(isCalibrationWindowStable(unstableWindow, 18)).toBe(false);
+  });
+
+  it("detects stable feature windows independently from the raw point spread", () => {
+    const stableFeatures = [
+      createFeatures(0.01, -0.01),
+      createFeatures(0.011, -0.009),
+      createFeatures(0.009, -0.011),
+      createFeatures(0.01, -0.008),
+    ];
+    const unstableFeatures = [
+      createFeatures(-0.08, -0.05),
+      createFeatures(0.01, 0.04),
+      createFeatures(0.06, -0.02),
+      createFeatures(-0.03, 0.08),
+    ];
+
+    expect(isFeatureWindowStable(stableFeatures, 0.08)).toBe(true);
+    expect(isFeatureWindowStable(unstableFeatures, 0.08)).toBe(false);
   });
 });

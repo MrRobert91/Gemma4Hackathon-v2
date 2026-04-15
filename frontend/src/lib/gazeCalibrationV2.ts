@@ -164,6 +164,30 @@ export function isCalibrationWindowStable(points: GazePoint[], maxDistance: numb
   return points.every((point) => Math.hypot(point.x - center.x, point.y - center.y) <= maxDistance);
 }
 
+function featureDistance(a: GazeFeatureVector, b: GazeFeatureVector) {
+  return Math.hypot(
+    (a.leftIrisX - b.leftIrisX) * 2.4,
+    (a.leftIrisY - b.leftIrisY) * 2.4,
+    (a.rightIrisX - b.rightIrisX) * 2.4,
+    (a.rightIrisY - b.rightIrisY) * 2.4,
+    (a.yaw - b.yaw) * 1.2,
+    (a.pitch - b.pitch) * 1.2,
+  );
+}
+
+export function isFeatureWindowStable(vectors: GazeFeatureVector[], maxDistance: number) {
+  if (vectors.length < 4) {
+    return false;
+  }
+
+  const center = averageFeatureVectors(vectors);
+  if (!center) {
+    return false;
+  }
+
+  return vectors.every((vector) => featureDistance(vector, center) <= maxDistance);
+}
+
 export function averageFeatureVectors(vectors: GazeFeatureVector[]) {
   if (vectors.length === 0) {
     return null;

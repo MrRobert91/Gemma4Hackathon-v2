@@ -5,13 +5,14 @@ import type { ProviderMode } from "../lib/gazeProvider";
 import { MediapipeBrowserProvider } from "../lib/mediapipeBrowserProvider";
 import { PointerProvider } from "../lib/pointerProvider";
 import { RemotePythonProvider } from "../lib/remotePythonProvider";
-import type { GazeFrame, GazeProviderStatus } from "../types";
+import type { GazeFrame, GazeProviderStatus, RawGazeMappingOptions } from "../types";
 
 type UseGazeProviderOptions = {
   mode: ProviderMode;
   enabled: boolean;
   videoRef: RefObject<HTMLVideoElement | null>;
   overlayRef: RefObject<HTMLCanvasElement | null>;
+  mappingOptions?: Partial<RawGazeMappingOptions>;
 };
 
 type GazeProviderState = {
@@ -28,6 +29,7 @@ export function useGazeProvider({
   enabled,
   videoRef,
   overlayRef,
+  mappingOptions,
 }: UseGazeProviderOptions): GazeProviderState {
   const [frame, setFrame] = useState<GazeFrame | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -35,6 +37,7 @@ export function useGazeProvider({
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
   const providerRef = useRef<MediapipeBrowserProvider | PointerProvider | RemotePythonProvider | null>(null);
   const logBufferRef = useRef<string[]>([]);
+  const mappingOptionsRef = useRef<Partial<RawGazeMappingOptions> | undefined>(mappingOptions);
 
   const providerLabel = useMemo(() => {
     switch (mode) {
@@ -46,6 +49,10 @@ export function useGazeProvider({
         return "MediaPipe + webcam";
     }
   }, [mode]);
+
+  useEffect(() => {
+    mappingOptionsRef.current = mappingOptions;
+  }, [mappingOptions]);
 
   useEffect(() => {
     setFrame(null);
@@ -95,6 +102,7 @@ export function useGazeProvider({
               width: window.innerWidth,
               height: window.innerHeight,
             }),
+            getMappingOptions: () => mappingOptionsRef.current ?? {},
             onFrame: (nextFrame) => {
               if (!mounted) {
                 return;
