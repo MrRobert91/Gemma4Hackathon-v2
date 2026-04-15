@@ -82,6 +82,9 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [usePitchAssist, setUsePitchAssist] = useState(true);
+  const [invertVerticalAxis, setInvertVerticalAxis] = useState(false);
+  const [horizontalSensitivity, setHorizontalSensitivity] = useState(1.2);
+  const [verticalSensitivity, setVerticalSensitivity] = useState(1.2);
   const [stabilization, setStabilization] = useState(82);
   const [predictions, setPredictions] = useState<PredictionResponse>({
     suggestions: [],
@@ -109,8 +112,9 @@ export default function App() {
   const mappingOptions = useMemo(
     () => ({
       usePitchAssist,
+      invertVertical: invertVerticalAxis,
     }),
-    [usePitchAssist],
+    [invertVerticalAxis, usePitchAssist],
   );
   const { frame, ready, providerLabel, error, stage, debugLogs } = useGazeProvider({
     mode: providerMode,
@@ -127,11 +131,14 @@ export default function App() {
     }
 
     if (frame.features && calibrationModel.sampleCount >= 4) {
-      return applyCalibrationToFrame(frame.features, calibrationModel);
+      return applyCalibrationToFrame(frame.features, calibrationModel, {
+        horizontalSensitivity,
+        verticalSensitivity,
+      });
     }
 
     return rawPoint;
-  }, [calibrationModel, frame, rawPoint]);
+  }, [calibrationModel, frame, horizontalSensitivity, rawPoint, verticalSensitivity]);
 
   const actionablePoint = useMemo(() => {
     if (
@@ -507,6 +514,30 @@ export default function App() {
             />
             <strong>{stabilization}%</strong>
           </label>
+          <label className="control-group">
+            <span>Sensibilidad X</span>
+            <input
+              type="range"
+              min="0.8"
+              max="4"
+              step="0.05"
+              value={horizontalSensitivity}
+              onChange={(event) => setHorizontalSensitivity(Number(event.target.value))}
+            />
+            <strong>{horizontalSensitivity.toFixed(2)}x</strong>
+          </label>
+          <label className="control-group">
+            <span>Sensibilidad Y</span>
+            <input
+              type="range"
+              min="0.8"
+              max="4"
+              step="0.05"
+              value={verticalSensitivity}
+              onChange={(event) => setVerticalSensitivity(Number(event.target.value))}
+            />
+            <strong>{verticalSensitivity.toFixed(2)}x</strong>
+          </label>
           <label className="control-group control-group--toggle">
             <span>Contraste alto</span>
             <input type="checkbox" checked={highContrast} onChange={(event) => setHighContrast(event.target.checked)} />
@@ -514,6 +545,14 @@ export default function App() {
           <label className="control-group control-group--toggle">
             <span>Usar pitch</span>
             <input type="checkbox" checked={usePitchAssist} onChange={(event) => setUsePitchAssist(event.target.checked)} />
+          </label>
+          <label className="control-group control-group--toggle">
+            <span>Invertir eje vertical</span>
+            <input
+              type="checkbox"
+              checked={invertVerticalAxis}
+              onChange={(event) => setInvertVerticalAxis(event.target.checked)}
+            />
           </label>
         </div>
       </header>
@@ -578,6 +617,9 @@ export default function App() {
             <li>{statusMessage}</li>
             <li>Score de calibracion: {Math.round(calibrationScore * 100)}%</li>
             <li>{usePitchAssist ? "Pitch asistido activo" : "Pitch asistido desactivado"}</li>
+            <li>{invertVerticalAxis ? "Eje vertical invertido" : "Eje vertical normal"}</li>
+            <li>Sensibilidad X: {horizontalSensitivity.toFixed(2)}x</li>
+            <li>Sensibilidad Y: {verticalSensitivity.toFixed(2)}x</li>
             <li>Estabilizacion: {stabilization}%</li>
           </ul>
         </section>

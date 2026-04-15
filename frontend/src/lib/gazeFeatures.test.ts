@@ -170,4 +170,54 @@ describe("gaze feature extraction", () => {
 
     expect(withPitch.y).toBeGreaterThan(irisOnly.y);
   });
+
+  it("can invert the vertical axis when the observed motion is flipped", () => {
+    const normal = estimateRawScreenPoint(
+      {
+        leftIrisX: 0.5,
+        leftIrisY: 0.36,
+        rightIrisX: 0.5,
+        rightIrisY: 0.36,
+        leftEyeOpen: 0.2,
+        rightEyeOpen: 0.2,
+        interocularDistance: 0.28,
+        faceCenterX: 0.5,
+        faceCenterY: 0.5,
+        faceWidth: 0.4,
+        faceHeight: 0.55,
+        yaw: 0,
+        pitch: 0,
+        roll: 0,
+      },
+      1000,
+      1000,
+      { usePitchAssist: false },
+    );
+
+    const inverted = estimateRawScreenPoint(
+      {
+        leftIrisX: 0.5,
+        leftIrisY: 0.36,
+        rightIrisX: 0.5,
+        rightIrisY: 0.36,
+        leftEyeOpen: 0.2,
+        rightEyeOpen: 0.2,
+        interocularDistance: 0.28,
+        faceCenterX: 0.5,
+        faceCenterY: 0.5,
+        faceWidth: 0.4,
+        faceHeight: 0.55,
+        yaw: 0,
+        pitch: 0,
+        roll: 0,
+      },
+      1000,
+      1000,
+      { usePitchAssist: false, invertVertical: true },
+    );
+
+    expect(normal.y).toBeLessThan(500);
+    expect(inverted.y).toBeGreaterThan(500);
+    expect(Math.abs(normal.y - 500)).toBeCloseTo(Math.abs(inverted.y - 500), 5);
+  });
 });

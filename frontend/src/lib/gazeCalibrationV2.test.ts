@@ -2,6 +2,7 @@ import {
   applyCalibrationToFrame,
   buildCalibrationModelV2,
   createEmptyCalibrationModelV2,
+  expandPointWithAxisRanges,
   isFeatureWindowStable,
   isCalibrationWindowStable,
 } from "./gazeCalibrationV2";
@@ -47,10 +48,108 @@ describe("feature-based calibration", () => {
 
     expect(model.sampleCount).toBe(samples.length);
     expect(model.score).toBeGreaterThan(0.7);
-    expect(point.x).toBeGreaterThan(700);
-    expect(point.x).toBeLessThan(820);
-    expect(point.y).toBeGreaterThan(400);
-    expect(point.y).toBeLessThan(500);
+    expect(point.x).toBeGreaterThan(820);
+    expect(point.x).toBeLessThan(980);
+    expect(point.y).toBeGreaterThan(450);
+    expect(point.y).toBeLessThan(620);
+    expect(model.axisRangeX).not.toBeNull();
+    expect(model.axisRangeY).not.toBeNull();
+    expect(model.axisRangeX?.targetMin).toBeLessThan(200);
+    expect(model.axisRangeX?.targetMax).toBeGreaterThan(1080);
+  });
+
+  it("expands a compressed calibrated point to the observed target span", () => {
+    const expanded = expandPointWithAxisRanges(
+      { x: 420, y: 360 },
+      {
+        weightsX: [],
+        weightsY: [],
+        score: 0,
+        sampleCount: 9,
+        axisRangeX: {
+          observedMin: 350,
+          observedMax: 450,
+          targetMin: 120,
+          targetMax: 1160,
+          invert: false,
+        },
+        axisRangeY: {
+          observedMin: 300,
+          observedMax: 400,
+          targetMin: 100,
+          targetMax: 700,
+          invert: false,
+        },
+      },
+      {
+        horizontalSensitivity: 1,
+        verticalSensitivity: 1,
+      },
+    );
+
+    expect(expanded.x).toBeCloseTo(848, 0);
+    expect(expanded.y).toBeCloseTo(460, 0);
+  });
+
+  it("applies per-axis sensitivity around the calibrated center", () => {
+    const neutral = expandPointWithAxisRanges(
+      { x: 430, y: 380 },
+      {
+        weightsX: [],
+        weightsY: [],
+        score: 0,
+        sampleCount: 9,
+        axisRangeX: {
+          observedMin: 350,
+          observedMax: 450,
+          targetMin: 100,
+          targetMax: 1100,
+          invert: false,
+        },
+        axisRangeY: {
+          observedMin: 300,
+          observedMax: 400,
+          targetMin: 80,
+          targetMax: 680,
+          invert: false,
+        },
+      },
+      {
+        horizontalSensitivity: 1,
+        verticalSensitivity: 1,
+      },
+    );
+
+    const boosted = expandPointWithAxisRanges(
+      { x: 430, y: 380 },
+      {
+        weightsX: [],
+        weightsY: [],
+        score: 0,
+        sampleCount: 9,
+        axisRangeX: {
+          observedMin: 350,
+          observedMax: 450,
+          targetMin: 100,
+          targetMax: 1100,
+          invert: false,
+        },
+        axisRangeY: {
+          observedMin: 300,
+          observedMax: 400,
+          targetMin: 80,
+          targetMax: 680,
+          invert: false,
+        },
+      },
+      {
+        horizontalSensitivity: 1.4,
+        verticalSensitivity: 1.3,
+      },
+    );
+
+    expect(boosted.x).toBeGreaterThan(neutral.x);
+    expect(boosted.y).toBeGreaterThan(neutral.y);
   });
 
   it("detects when a calibration window is stable enough to capture", () => {

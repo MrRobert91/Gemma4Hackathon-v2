@@ -22,6 +22,7 @@ const defaultMappingOptions: RawGazeMappingOptions = {
   yawWeight: 0.45,
   pitchWeight: 0.28,
   usePitchAssist: true,
+  invertVertical: false,
 };
 
 const LEFT_EYE_OUTER = 33;
@@ -191,6 +192,7 @@ export function estimateRawScreenPoint(
   const mapping = { ...defaultMappingOptions, ...options };
   const horizontalSignal = ((features.leftIrisX - 0.5) + (features.rightIrisX - 0.5)) / 2;
   const verticalSignal = ((features.leftIrisY - 0.5) + (features.rightIrisY - 0.5)) / 2;
+  const verticalDirection = mapping.invertVertical ? -1 : 1;
   const horizontal = clamp(
     0.5 - horizontalSignal * mapping.horizontalGain - features.yaw * mapping.yawWeight,
     0,
@@ -198,8 +200,8 @@ export function estimateRawScreenPoint(
   );
   const vertical = clamp(
     0.5 +
-      verticalSignal * mapping.verticalGain +
-      (mapping.usePitchAssist ? features.pitch * mapping.pitchWeight : 0),
+      verticalSignal * mapping.verticalGain * verticalDirection +
+      (mapping.usePitchAssist ? features.pitch * mapping.pitchWeight * verticalDirection : 0),
     0,
     1,
   );

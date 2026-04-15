@@ -1,13 +1,29 @@
 import type { CalibrationSampleV2, GazeFeatureVector, GazePoint } from "../types";
 
+export type AxisRangeCalibration = {
+  observedMin: number;
+  observedMax: number;
+  targetMin: number;
+  targetMax: number;
+  invert: boolean;
+};
+
+export type CalibrationApplicationOptions = {
+  horizontalSensitivity?: number;
+  verticalSensitivity?: number;
+};
+
 export type CalibrationModelV2 = {
   weightsX: number[];
   weightsY: number[];
   score: number;
   sampleCount: number;
+  axisRangeX: AxisRangeCalibration | null;
+  axisRangeY: AxisRangeCalibration | null;
 };
 
 const ridgeLambda = 0.01;
+const calibrationEdgeExpansionFactor = 0.125;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -19,6 +35,8 @@ export function createEmptyCalibrationModelV2(): CalibrationModelV2 {
     weightsY: [],
     score: 0,
     sampleCount: 0,
+    axisRangeX: null,
+    axisRangeY: null,
   };
 }
 
@@ -116,10 +134,103 @@ function predictWithWeights(weights: number[], features: GazeFeatureVector) {
   return featureArray.reduce((sum, value, index) => sum + value * (weights[index] ?? 0), 0);
 }
 
-export function applyCalibrationToFrame(features: GazeFeatureVector, model: CalibrationModelV2): GazePoint {
+function average(values: number[]) {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function buildExpandedTargetBounds(targetMin: number, targetMax: number) {
+  const span = targetMax - targetMin;
+  const padding = span * calibrationEdgeExpansionFactor;
+
   return {
+    targetMin: targetMin - padding,
+    targetMax: targetMax + padding,
+  };
+}
+
+function buildAxisRangeCalibration(samples: CalibrationSampleV2[], weights: number[], targetKey: "x" | "y") {
+  if (samples.length < 4 || weights.length === 0) {
+    return null;
+  }
+
+  const targetValues = samples.map((sample) => sample.target[targetKey]);
+  const targetMin = Math.min(...targetValues);
+  const targetMax = Math.max(...targetValues);
+  const lowEdgeSamples = samples.filter((sample) => Math.abs(sample.target[targetKey] - targetMin) < 1e-3);
+  const highEdgeSamples = samples.filter((sample) => Math.abs(sample.target[targetKey] - targetMax) < 1e-3);
+
+  if (lowEdgeSamples.length === 0 || highEdgeSamples.length === 0 || Math.abs(targetMax - targetMin) < 1e-6) {
+    return null;
+  }
+
+  const observedLow = average(lowEdgeSamples.map((sample) => predictWithWeights(weights, sample.features)));
+  const observedHigh = average(highEdgeSamples.map((sample) => predictWithWeights(weights, sample.features)));
+  const observedMin = Math.min(observedLow, observedHigh);
+  const observedMax = Math.max(observedLow, observedHigh);
+
+  if (Math.abs(observedMax - observedMin) < 1e-6) {
+    return null;
+  }
+
+  const expandedTargets = buildExpandedTargetBounds(targetMin, targetMax);
+
+  return {
+    observedMin,
+    observedMax,
+    targetMin: expandedTargets.targetMin,
+    targetMax: expandedTargets.targetMax,
+    invert: observedLow > observedHigh,
+  };
+}
+
+function applyAxisRange(value: number, axisRange: AxisRangeCalibration | null, sensitivity = 1) {
+  if (!axisRange) {
+    return value;
+  }
+
+  const observedSpan = axisRange.observedMax - axisRange.observedMin;
+  if (Math.abs(observedSpan) < 1e-6) {
+    return clamp(value, axisRange.targetMin, axisRange.targetMax);
+  }
+
+  let normalized = clamp((value - axisRange.observedMin) / observedSpan, 0, 1);
+  if (axisRange.invert) {
+    normalized = 1 - normalized;
+  }
+  const remapped = axisRange.targetMin + normalized * (axisRange.targetMax - axisRange.targetMin);
+  const center = (axisRange.targetMin + axisRange.targetMax) / 2;
+  const boosted = center + (remapped - center) * sensitivity;
+
+  return clamp(boosted, axisRange.targetMin, axisRange.targetMax);
+}
+
+export function expandPointWithAxisRanges(
+  point: GazePoint,
+  model: CalibrationModelV2,
+  options?: CalibrationApplicationOptions,
+): GazePoint {
+  return {
+    x: applyAxisRange(point.x, model.axisRangeX, options?.horizontalSensitivity ?? 1),
+    y: applyAxisRange(point.y, model.axisRangeY, options?.verticalSensitivity ?? 1),
+  };
+}
+
+export function applyCalibrationToFrame(
+  features: GazeFeatureVector,
+  model: CalibrationModelV2,
+  options?: CalibrationApplicationOptions,
+): GazePoint {
+  const basePoint = {
     x: predictWithWeights(model.weightsX, features),
     y: predictWithWeights(model.weightsY, features),
+  };
+
+  return {
+    ...expandPointWithAxisRanges(basePoint, model, options),
   };
 }
 
@@ -130,6 +241,8 @@ export function buildCalibrationModelV2(samples: CalibrationSampleV2[]): Calibra
 
   const weightsX = fitAxis(samples, "x");
   const weightsY = fitAxis(samples, "y");
+  const axisRangeX = buildAxisRangeCalibration(samples, weightsX, "x");
+  const axisRangeY = buildAxisRangeCalibration(samples, weightsY, "y");
 
   const meanAbsoluteError =
     samples.reduce((sum, sample) => {
@@ -138,6 +251,8 @@ export function buildCalibrationModelV2(samples: CalibrationSampleV2[]): Calibra
         weightsY,
         score: 0,
         sampleCount: samples.length,
+        axisRangeX,
+        axisRangeY,
       });
       return sum + Math.abs(predicted.x - sample.target.x) + Math.abs(predicted.y - sample.target.y);
     }, 0) /
@@ -148,6 +263,8 @@ export function buildCalibrationModelV2(samples: CalibrationSampleV2[]): Calibra
     weightsY,
     score: clamp(1 - meanAbsoluteError / 220, 0, 1),
     sampleCount: samples.length,
+    axisRangeX,
+    axisRangeY,
   };
 }
 

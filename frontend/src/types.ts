@@ -102,4 +102,5 @@ export type RawGazeMappingOptions = {
   yawWeight: number;
   pitchWeight: number;
   usePitchAssist: boolean;
+  invertVertical: boolean;
 };
