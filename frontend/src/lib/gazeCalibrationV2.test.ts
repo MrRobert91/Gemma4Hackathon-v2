@@ -48,12 +48,14 @@ describe("feature-based calibration", () => {
 
     expect(model.sampleCount).toBe(samples.length);
     expect(model.score).toBeGreaterThan(0.7);
-    expect(point.x).toBeGreaterThan(820);
+    expect(point.x).toBeGreaterThan(760);
     expect(point.x).toBeLessThan(980);
-    expect(point.y).toBeGreaterThan(450);
+    expect(point.y).toBeGreaterThan(430);
     expect(point.y).toBeLessThan(620);
     expect(model.axisRangeX).not.toBeNull();
     expect(model.axisRangeY).not.toBeNull();
+    expect(model.axisAnchorsX?.points.length).toBeGreaterThanOrEqual(3);
+    expect(model.axisAnchorsY?.points.length).toBeGreaterThanOrEqual(2);
     expect(model.axisRangeX?.targetMin).toBeLessThan(200);
     expect(model.axisRangeX?.targetMax).toBeGreaterThan(1080);
   });
@@ -80,6 +82,8 @@ describe("feature-based calibration", () => {
           targetMax: 700,
           invert: false,
         },
+        axisAnchorsX: null,
+        axisAnchorsY: null,
       },
       {
         horizontalSensitivity: 1,
@@ -113,6 +117,8 @@ describe("feature-based calibration", () => {
           targetMax: 680,
           invert: false,
         },
+        axisAnchorsX: null,
+        axisAnchorsY: null,
       },
       {
         horizontalSensitivity: 1,
@@ -141,6 +147,8 @@ describe("feature-based calibration", () => {
           targetMax: 680,
           invert: false,
         },
+        axisAnchorsX: null,
+        axisAnchorsY: null,
       },
       {
         horizontalSensitivity: 1.4,

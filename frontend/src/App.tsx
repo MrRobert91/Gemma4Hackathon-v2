@@ -22,8 +22,10 @@ import { applyAction, createInitialComposerState } from "./lib/appState";
 import {
   applyCalibrationToFrame,
   averageFeatureVectors,
+  buildCalibrationTelemetry,
   buildCalibrationModelV2,
   createEmptyCalibrationModelV2,
+  getFeatureWindowSpread,
   isFeatureWindowStable,
   type CalibrationModelV2,
 } from "./lib/gazeCalibrationV2";
@@ -37,10 +39,14 @@ const calibrationHoldMs = 2200;
 const calibrationMinPointMs = 1400;
 const calibrationMaxPointMs = 6500;
 const calibrationSampleIntervalMs = 100;
-const calibrationFeatureStability = 0.08;
+const calibrationFeatureStability = 0.14;
 const calibrationMinValidFrames = 12;
 const minimumCalibrationConfidence = 0.45;
 const calibrationSequence = [4, 1, 7, 3, 5, 0, 2, 6, 8] as const;
+const calibrationFallbackMinFrames = 6;
+const calibrationFallbackQualityMultiplier = 0.8;
+const calibrationSettleMs = 900;
+const calibrationWindowSize = 18;
 
 function keyValueToAction(value: string) {
   switch (value) {
@@ -99,12 +105,15 @@ export default function App() {
   const [calibrationModel, setCalibrationModel] = useState<CalibrationModelV2>(createEmptyCalibrationModelV2());
   const [calibrationProgress, setCalibrationProgress] = useState(0);
   const [audioReady, setAudioReady] = useState(false);
+  const [calibrationDebugLogs, setCalibrationDebugLogs] = useState<string[]>([]);
 
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<GazeFrame | null>(null);
   const calibrationSamplesRef = useRef<CalibrationSampleV2[]>([]);
+  const calibrationLogBufferRef = useRef<string[]>([]);
   const featureWindowRef = useRef<GazeFeatureVector[]>([]);
   const qualityWindowRef = useRef<number[]>([]);
+  const correctedPointWindowRef = useRef<GazePoint[]>([]);
   const [smoothedPoint, setSmoothedPoint] = useState<GazePoint | null>(null);
 
   const deferredText = useDeferredValue(composerState.text);
@@ -139,6 +148,28 @@ export default function App() {
 
     return rawPoint;
   }, [calibrationModel, frame, horizontalSensitivity, rawPoint, verticalSensitivity]);
+  const telemetry = useMemo(() => {
+    if (!frame?.features) {
+      return null;
+    }
+
+    return buildCalibrationTelemetry(frame.features, calibrationModel, {
+      horizontalSensitivity,
+      verticalSensitivity,
+    });
+  }, [calibrationModel, frame?.features, horizontalSensitivity, verticalSensitivity]);
+  const combinedDebugLogs = useMemo(
+    () => [...debugLogs, ...calibrationDebugLogs].slice(-80),
+    [calibrationDebugLogs, debugLogs],
+  );
+
+  const appendCalibrationLog = useCallback((message: string) => {
+    const timestamp = new Date().toLocaleTimeString("es-ES", { hour12: false });
+    const entry = `${timestamp} | calibration | ${message}`;
+    console.info(`[Calibration] ${entry}`);
+    calibrationLogBufferRef.current = [...calibrationLogBufferRef.current, entry].slice(-50);
+    setCalibrationDebugLogs(calibrationLogBufferRef.current);
+  }, []);
 
   const actionablePoint = useMemo(() => {
     if (
@@ -168,19 +199,29 @@ export default function App() {
 
   useEffect(() => {
     if (!correctedPoint) {
+      correctedPointWindowRef.current = [];
       setSmoothedPoint(null);
       return;
     }
 
+    correctedPointWindowRef.current = [...correctedPointWindowRef.current, correctedPoint].slice(-5);
+    const medianX = [...correctedPointWindowRef.current.map((point) => point.x)].sort((a, b) => a - b)[
+      Math.floor(correctedPointWindowRef.current.length / 2)
+    ];
+    const medianY = [...correctedPointWindowRef.current.map((point) => point.y)].sort((a, b) => a - b)[
+      Math.floor(correctedPointWindowRef.current.length / 2)
+    ];
+    const filteredPoint = { x: medianX, y: medianY };
+
     setSmoothedPoint((previousPoint) => {
       if (!previousPoint) {
-        return correctedPoint;
+        return filteredPoint;
       }
 
       const alpha = Math.max(0.08, (100 - stabilization) / 100);
       return {
-        x: previousPoint.x + (correctedPoint.x - previousPoint.x) * alpha,
-        y: previousPoint.y + (correctedPoint.y - previousPoint.y) * alpha,
+        x: previousPoint.x + (filteredPoint.x - previousPoint.x) * alpha,
+        y: previousPoint.y + (filteredPoint.y - previousPoint.y) * alpha,
       };
     });
   }, [correctedPoint, stabilization]);
@@ -362,14 +403,19 @@ export default function App() {
     setCalibrationIndex(0);
     setCalibrationSamples([]);
     calibrationSamplesRef.current = [];
+    calibrationLogBufferRef.current = [];
+    setCalibrationDebugLogs([]);
     featureWindowRef.current = [];
     qualityWindowRef.current = [];
     setCalibrationProgress(0);
     setCalibrationScore(0);
     setCalibrationModel(createEmptyCalibrationModelV2());
     setStatusMessage("Calibracion automatica iniciada. Mantener la mirada fija en cada punto hasta que avance.");
+    appendCalibrationLog(
+      `inicio | puntos=${calibrationSequence.length} minFrames=${calibrationMinValidFrames} fallbackFrames=${calibrationFallbackMinFrames} estabilidad=${calibrationFeatureStability}`,
+    );
     resetDwell();
-  }, [resetDwell]);
+  }, [appendCalibrationLog, resetDwell]);
 
   useEffect(() => {
     if (!calibrationActive) {
@@ -377,24 +423,33 @@ export default function App() {
     }
 
     let startedAt = Date.now();
+    let lastProgressSecond = -1;
     featureWindowRef.current = [];
     qualityWindowRef.current = [];
     setCalibrationProgress(0);
+    appendCalibrationLog(`punto ${calibrationIndex + 1}/${calibrationSequence.length} iniciado`);
 
     const intervalId = window.setInterval(() => {
       const currentFrame = frameRef.current;
+      const elapsedMs = Date.now() - startedAt;
 
       if (
         currentFrame?.features &&
         currentFrame.irisDetected &&
         !currentFrame.diagnostics.blink &&
-        currentFrame.confidence >= minimumCalibrationConfidence
+        currentFrame.confidence >= minimumCalibrationConfidence &&
+        elapsedMs >= calibrationSettleMs
       ) {
         featureWindowRef.current.push(currentFrame.features);
         qualityWindowRef.current.push(currentFrame.confidence);
+        if (featureWindowRef.current.length > calibrationWindowSize) {
+          featureWindowRef.current.shift();
+        }
+        if (qualityWindowRef.current.length > calibrationWindowSize) {
+          qualityWindowRef.current.shift();
+        }
       }
 
-      const elapsedMs = Date.now() - startedAt;
       const progress = Math.min(elapsedMs / calibrationHoldMs, 1);
       const validFrames = featureWindowRef.current.length;
 
@@ -403,14 +458,28 @@ export default function App() {
       const stable = isFeatureWindowStable(featureWindowRef.current, calibrationFeatureStability);
       const averagedFeatures = averageFeatureVectors(featureWindowRef.current);
       const quality = averageQuality(qualityWindowRef.current);
+      const spread = getFeatureWindowSpread(featureWindowRef.current);
+      const shouldTimeout = elapsedMs >= calibrationMaxPointMs;
+      const fallbackCapture =
+        shouldTimeout &&
+        Boolean(averagedFeatures) &&
+        validFrames >= calibrationFallbackMinFrames &&
+        quality >= minimumCalibrationConfidence * calibrationFallbackQualityMultiplier;
       const shouldCapture =
         stable &&
         averagedFeatures &&
         validFrames >= calibrationMinValidFrames &&
         elapsedMs >= calibrationMinPointMs;
-      const shouldTimeout = elapsedMs >= calibrationMaxPointMs;
+      const progressSecond = Math.floor(elapsedMs / 1000);
 
-      if (!shouldCapture && !shouldTimeout) {
+      if (progressSecond !== lastProgressSecond) {
+        lastProgressSecond = progressSecond;
+        appendCalibrationLog(
+          `punto ${calibrationIndex + 1} | t=${(elapsedMs / 1000).toFixed(1)}s frames=${validFrames} estable=${stable ? "si" : "no"} spread=${spread.toFixed(3)} calidad=${Math.round(quality * 100)}%`,
+        );
+      }
+
+      if (!shouldCapture && !fallbackCapture && !shouldTimeout) {
         setStatusMessage(
           `Calibracion en curso. Punto ${calibrationIndex + 1} de ${calibrationSequence.length}. Frames validos: ${validFrames}/${calibrationMinValidFrames}.`,
         );
@@ -423,11 +492,16 @@ export default function App() {
       featureWindowRef.current = [];
       qualityWindowRef.current = [];
 
+      const captureMode = shouldCapture ? "estable" : fallbackCapture ? "timeout-fallback" : "descartada";
+      const capturedQuality = fallbackCapture ? quality * calibrationFallbackQualityMultiplier : quality;
       const nextSamples =
-        shouldCapture && averagedFeatures
-          ? [...calibrationSamplesRef.current, { features: averagedFeatures, target, quality }]
+        (shouldCapture || fallbackCapture) && averagedFeatures
+          ? [...calibrationSamplesRef.current, { features: averagedFeatures, target, quality: capturedQuality }]
           : calibrationSamplesRef.current;
 
+      appendCalibrationLog(
+        `punto ${calibrationIndex + 1} finalizado | modo=${captureMode} frames=${validFrames} estable=${stable ? "si" : "no"} spread=${spread.toFixed(3)} calidad=${Math.round(quality * 100)}% muestras=${nextSamples.length}`,
+      );
       calibrationSamplesRef.current = nextSamples;
       setCalibrationSamples(nextSamples);
 
@@ -437,8 +511,20 @@ export default function App() {
         setCalibrationScore(nextModel.score);
         setCalibrationActive(false);
         setCalibrationProgress(0);
+        appendCalibrationLog(
+          `modelo final | muestras=${nextModel.sampleCount} score=${Math.round(nextModel.score * 100)}% rangoX=${
+            nextModel.axisRangeX
+              ? `${Math.round(nextModel.axisRangeX.targetMin)}-${Math.round(nextModel.axisRangeX.targetMax)} inv=${nextModel.axisRangeX.invert ? "si" : "no"}`
+              : "null"
+          } rangoY=${
+            nextModel.axisRangeY
+              ? `${Math.round(nextModel.axisRangeY.targetMin)}-${Math.round(nextModel.axisRangeY.targetMax)} inv=${nextModel.axisRangeY.invert ? "si" : "no"}`
+              : "null"
+          }`,
+        );
 
         if (nextSamples.length < 4) {
+          appendCalibrationLog("resultado insuficiente | menos de 4 muestras capturadas");
           setStatusMessage(
             "Calibracion completada con datos insuficientes. Repite el proceso con mejor iluminacion y manteniendo la cabeza estable.",
           );
@@ -452,7 +538,7 @@ export default function App() {
       setCalibrationIndex((value) => value + 1);
       startedAt = Date.now();
 
-      if (!shouldCapture || !averagedFeatures) {
+      if ((!shouldCapture && !fallbackCapture) || !averagedFeatures) {
         setStatusMessage(
           `La muestra del punto ${calibrationIndex + 1} no fue estable o no hubo suficientes frames utiles. Continuando con el punto ${calibrationIndex + 2}.`,
         );
@@ -467,7 +553,7 @@ export default function App() {
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [calibrationActive, calibrationIndex]);
+  }, [appendCalibrationLog, calibrationActive, calibrationIndex]);
 
   return (
     <div className={`app-shell${highContrast ? " app-shell--contrast" : ""}`}>
@@ -605,6 +691,7 @@ export default function App() {
           overlayRef={overlayRef}
           cameraReady={camera.ready}
           cameraError={camera.error}
+          telemetry={telemetry}
         />
 
         <section className="status-card">
@@ -631,6 +718,16 @@ export default function App() {
                 ? `Rango Y activo: ${Math.round(calibrationModel.axisRangeY.targetMin)}-${Math.round(calibrationModel.axisRangeY.targetMax)}`
                 : "Rango Y no calibrado"}
             </li>
+            <li>
+              {telemetry?.normalizedX !== null && telemetry?.normalizedX !== undefined
+                ? `Norm X viva: ${telemetry.normalizedX.toFixed(3)}`
+                : "Norm X viva: --"}
+            </li>
+            <li>
+              {telemetry?.normalizedY !== null && telemetry?.normalizedY !== undefined
+                ? `Norm Y viva: ${telemetry.normalizedY.toFixed(3)}`
+                : "Norm Y viva: --"}
+            </li>
             <li>Estabilizacion: {stabilization}%</li>
           </ul>
         </section>
@@ -646,9 +743,9 @@ export default function App() {
         <section className="status-card status-card--debug">
           <p className="eyebrow">Logs Eye Tracking</p>
           <h3>Traza de arranque</h3>
-          {debugLogs.length > 0 ? (
+          {combinedDebugLogs.length > 0 ? (
             <div className="debug-log-list">
-              {debugLogs.map((entry) => (
+              {combinedDebugLogs.map((entry) => (
                 <code key={entry} className="debug-log-entry">
                   {entry}
                 </code>

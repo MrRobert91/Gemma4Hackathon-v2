@@ -8,9 +8,29 @@ export type AxisRangeCalibration = {
   invert: boolean;
 };
 
+export type AxisAnchorPoint = {
+  signal: number;
+  target: number;
+};
+
+export type AxisAnchorCalibration = {
+  points: AxisAnchorPoint[];
+};
+
 export type CalibrationApplicationOptions = {
   horizontalSensitivity?: number;
   verticalSensitivity?: number;
+};
+
+export type CalibrationTelemetry = {
+  signalX: number;
+  signalY: number;
+  normalizedX: number | null;
+  normalizedY: number | null;
+  mappedX: number | null;
+  mappedY: number | null;
+  regressionX: number;
+  regressionY: number;
 };
 
 export type CalibrationModelV2 = {
@@ -20,6 +40,8 @@ export type CalibrationModelV2 = {
   sampleCount: number;
   axisRangeX: AxisRangeCalibration | null;
   axisRangeY: AxisRangeCalibration | null;
+  axisAnchorsX: AxisAnchorCalibration | null;
+  axisAnchorsY: AxisAnchorCalibration | null;
 };
 
 const ridgeLambda = 0.01;
@@ -37,6 +59,8 @@ export function createEmptyCalibrationModelV2(): CalibrationModelV2 {
     sampleCount: 0,
     axisRangeX: null,
     axisRangeY: null,
+    axisAnchorsX: null,
+    axisAnchorsY: null,
   };
 }
 
@@ -134,7 +158,7 @@ function predictWithWeights(weights: number[], features: GazeFeatureVector) {
   return featureArray.reduce((sum, value, index) => sum + value * (weights[index] ?? 0), 0);
 }
 
-function getAxisSignal(features: GazeFeatureVector, axis: "x" | "y") {
+export function getAxisSignal(features: GazeFeatureVector, axis: "x" | "y") {
   if (axis === "x") {
     const irisHorizontal = ((features.leftIrisX - 0.5) + (features.rightIrisX - 0.5)) / 2;
     return -irisHorizontal - features.yaw * 0.35;
@@ -159,6 +183,25 @@ function buildExpandedTargetBounds(targetMin: number, targetMax: number) {
   return {
     targetMin: targetMin - padding,
     targetMax: targetMax + padding,
+  };
+}
+
+function buildAxisAnchors(samples: CalibrationSampleV2[], targetKey: "x" | "y") {
+  const uniqueTargets = [...new Set(samples.map((sample) => sample.target[targetKey]))].sort((a, b) => a - b);
+  if (uniqueTargets.length < 2) {
+    return null;
+  }
+
+  const points = uniqueTargets.map((target) => {
+    const groupedSamples = samples.filter((sample) => Math.abs(sample.target[targetKey] - target) < 1e-3);
+    return {
+      target,
+      signal: average(groupedSamples.map((sample) => getAxisSignal(sample.features, targetKey))),
+    };
+  });
+
+  return {
+    points,
   };
 }
 
@@ -218,6 +261,73 @@ function applyAxisRange(value: number, axisRange: AxisRangeCalibration | null, s
   return clamp(boosted, axisRange.targetMin, axisRange.targetMax);
 }
 
+function normalizeAxisSignal(value: number, axisRange: AxisRangeCalibration | null) {
+  if (!axisRange) {
+    return null;
+  }
+
+  const observedSpan = axisRange.observedMax - axisRange.observedMin;
+  if (Math.abs(observedSpan) < 1e-6) {
+    return null;
+  }
+
+  let normalized = clamp((value - axisRange.observedMin) / observedSpan, 0, 1);
+  if (axisRange.invert) {
+    normalized = 1 - normalized;
+  }
+  return normalized;
+}
+
+function interpolateAxisWithAnchors(value: number, anchors: AxisAnchorCalibration | null) {
+  if (!anchors || anchors.points.length < 2) {
+    return null;
+  }
+
+  const sorted = [...anchors.points].sort((a, b) => a.signal - b.signal);
+  let left = sorted[0];
+  let right = sorted[1];
+
+  if (value <= sorted[0].signal) {
+    left = sorted[0];
+    right = sorted[1];
+  } else if (value >= sorted[sorted.length - 1].signal) {
+    left = sorted[sorted.length - 2];
+    right = sorted[sorted.length - 1];
+  } else {
+    for (let index = 0; index < sorted.length - 1; index += 1) {
+      if (value >= sorted[index].signal && value <= sorted[index + 1].signal) {
+        left = sorted[index];
+        right = sorted[index + 1];
+        break;
+      }
+    }
+  }
+
+  const signalSpan = right.signal - left.signal;
+  if (Math.abs(signalSpan) < 1e-6) {
+    return left.target;
+  }
+
+  const ratio = (value - left.signal) / signalSpan;
+  return left.target + ratio * (right.target - left.target);
+}
+
+function applyAxisCalibration(
+  signal: number,
+  axisRange: AxisRangeCalibration | null,
+  axisAnchors: AxisAnchorCalibration | null,
+  sensitivity = 1,
+) {
+  const anchorTarget = interpolateAxisWithAnchors(signal, axisAnchors);
+  const baseTarget = anchorTarget ?? applyAxisRange(signal, axisRange, 1);
+  const rangeMin = axisRange?.targetMin ?? Math.min(...(axisAnchors?.points.map((point) => point.target) ?? [baseTarget]));
+  const rangeMax = axisRange?.targetMax ?? Math.max(...(axisAnchors?.points.map((point) => point.target) ?? [baseTarget]));
+  const center = (rangeMin + rangeMax) / 2;
+  const boosted = center + (baseTarget - center) * sensitivity;
+
+  return clamp(boosted, rangeMin, rangeMax);
+}
+
 export function expandPointWithAxisRanges(
   point: GazePoint,
   model: CalibrationModelV2,
@@ -242,11 +352,42 @@ export function applyCalibrationToFrame(
     x: getAxisSignal(features, "x"),
     y: getAxisSignal(features, "y"),
   };
-  const rangedPoint = expandPointWithAxisRanges(signalPoint, model, options);
+  const calibratedPoint = {
+    x: applyAxisCalibration(signalPoint.x, model.axisRangeX, model.axisAnchorsX, options?.horizontalSensitivity ?? 1),
+    y: applyAxisCalibration(signalPoint.y, model.axisRangeY, model.axisAnchorsY, options?.verticalSensitivity ?? 1),
+  };
 
   return {
-    x: model.axisRangeX ? rangedPoint.x : regressionPoint.x,
-    y: model.axisRangeY ? rangedPoint.y : regressionPoint.y,
+    x: model.axisRangeX || model.axisAnchorsX ? calibratedPoint.x : regressionPoint.x,
+    y: model.axisRangeY || model.axisAnchorsY ? calibratedPoint.y : regressionPoint.y,
+  };
+}
+
+export function buildCalibrationTelemetry(
+  features: GazeFeatureVector,
+  model: CalibrationModelV2,
+  options?: CalibrationApplicationOptions,
+): CalibrationTelemetry {
+  const signalX = getAxisSignal(features, "x");
+  const signalY = getAxisSignal(features, "y");
+  const regressionX = predictWithWeights(model.weightsX, features);
+  const regressionY = predictWithWeights(model.weightsY, features);
+
+  return {
+    signalX,
+    signalY,
+    normalizedX: normalizeAxisSignal(signalX, model.axisRangeX),
+    normalizedY: normalizeAxisSignal(signalY, model.axisRangeY),
+    mappedX:
+      model.axisRangeX || model.axisAnchorsX
+        ? applyAxisCalibration(signalX, model.axisRangeX, model.axisAnchorsX, options?.horizontalSensitivity ?? 1)
+        : null,
+    mappedY:
+      model.axisRangeY || model.axisAnchorsY
+        ? applyAxisCalibration(signalY, model.axisRangeY, model.axisAnchorsY, options?.verticalSensitivity ?? 1)
+        : null,
+    regressionX,
+    regressionY,
   };
 }
 
@@ -259,6 +400,8 @@ export function buildCalibrationModelV2(samples: CalibrationSampleV2[]): Calibra
   const weightsY = fitAxis(samples, "y");
   const axisRangeX = buildAxisRangeCalibration(samples, weightsX, "x");
   const axisRangeY = buildAxisRangeCalibration(samples, weightsY, "y");
+  const axisAnchorsX = buildAxisAnchors(samples, "x");
+  const axisAnchorsY = buildAxisAnchors(samples, "y");
 
   const meanAbsoluteError =
     samples.reduce((sum, sample) => {
@@ -269,6 +412,8 @@ export function buildCalibrationModelV2(samples: CalibrationSampleV2[]): Calibra
         sampleCount: samples.length,
         axisRangeX,
         axisRangeY,
+        axisAnchorsX,
+        axisAnchorsY,
       });
       return sum + Math.abs(predicted.x - sample.target.x) + Math.abs(predicted.y - sample.target.y);
     }, 0) /
@@ -281,6 +426,8 @@ export function buildCalibrationModelV2(samples: CalibrationSampleV2[]): Calibra
     sampleCount: samples.length,
     axisRangeX,
     axisRangeY,
+    axisAnchorsX,
+    axisAnchorsY,
   };
 }
 
@@ -308,17 +455,25 @@ function featureDistance(a: GazeFeatureVector, b: GazeFeatureVector) {
   );
 }
 
+export function getFeatureWindowSpread(vectors: GazeFeatureVector[]) {
+  if (vectors.length < 2) {
+    return 0;
+  }
+
+  const center = averageFeatureVectors(vectors);
+  if (!center) {
+    return 0;
+  }
+
+  return Math.max(...vectors.map((vector) => featureDistance(vector, center)));
+}
+
 export function isFeatureWindowStable(vectors: GazeFeatureVector[], maxDistance: number) {
   if (vectors.length < 4) {
     return false;
   }
 
-  const center = averageFeatureVectors(vectors);
-  if (!center) {
-    return false;
-  }
-
-  return vectors.every((vector) => featureDistance(vector, center) <= maxDistance);
+  return getFeatureWindowSpread(vectors) <= maxDistance;
 }
 
 export function averageFeatureVectors(vectors: GazeFeatureVector[]) {
