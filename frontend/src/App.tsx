@@ -9,6 +9,7 @@ import { useCameraStream } from "./hooks/useCameraStream";
 import { useDwellSelection } from "./hooks/useDwellSelection";
 import { useGazeProvider } from "./hooks/useGazeProvider";
 import { importGoogleForm, submitGoogleForm } from "./lib/api";
+import { resolveBinaryDecisionTarget } from "./lib/decisionZone";
 import { createInitialFormFlowState, formFlowReducer } from "./lib/formFlow";
 import {
   applyCalibrationToFrame,
@@ -61,7 +62,8 @@ export default function App() {
   const [activeFormUrl, setActiveFormUrl] = useState("");
   const [formFlow, dispatchFormFlow] = useReducer(formFlowReducer, undefined, createInitialFormFlowState);
   const [providerMode, setProviderMode] = useState<ProviderMode>("mediapipe");
-  const [dwellMs, setDwellMs] = useState(850);
+  const [dwellMs, setDwellMs] = useState(3000);
+  const [neutralZonePercent, setNeutralZonePercent] = useState(24);
   const [highContrast, setHighContrast] = useState(false);
   const [usePitchAssist, setUsePitchAssist] = useState(true);
   const [invertVerticalAxis, setInvertVerticalAxis] = useState(false);
@@ -197,6 +199,10 @@ export default function App() {
     dwellMs,
     snapRadius: calibrationModel.sampleCount >= 4 ? 180 : 240,
     onActivate: handleActivateTarget,
+    resolveTargetId: (gazePoint) =>
+      resolveBinaryDecisionTarget(gazePoint, window.innerWidth, {
+        centerDeadZoneRatio: neutralZonePercent / 100,
+      }),
   });
 
   useEffect(() => {
@@ -509,8 +515,20 @@ export default function App() {
           </label>
           <label className="control-group">
             <span>Dwell</span>
-            <input type="range" min="500" max="1600" step="50" value={dwellMs} onChange={(event) => setDwellMs(Number(event.target.value))} />
+            <input type="range" min="1000" max="5000" step="100" value={dwellMs} onChange={(event) => setDwellMs(Number(event.target.value))} />
             <strong>{dwellMs} ms</strong>
+          </label>
+          <label className="control-group">
+            <span>Zona neutra</span>
+            <input
+              type="range"
+              min="10"
+              max="40"
+              step="1"
+              value={neutralZonePercent}
+              onChange={(event) => setNeutralZonePercent(Number(event.target.value))}
+            />
+            <strong>{neutralZonePercent}%</strong>
           </label>
           <label className="control-group">
             <span>Estabilizacion</span>
@@ -619,6 +637,7 @@ export default function App() {
             <li>Proveedor: {formFlow.form?.provider ?? "--"}</li>
             <li>Pasos del formulario: {formFlow.steps.length}</li>
             <li>Respuestas seleccionadas: {answeredCount}</li>
+            <li>Zona neutra central: {neutralZonePercent}%</li>
             <li>Score de calibracion: {Math.round(calibrationScore * 100)}%</li>
             <li>Muestras de calibracion: {calibrationModel.sampleCount}</li>
             <li>{usePitchAssist ? "Pitch asistido activo" : "Pitch asistido desactivado"}</li>
