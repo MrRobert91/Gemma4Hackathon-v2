@@ -1,0 +1,113 @@
+import type { DecisionStep, ImportedForm } from "../types";
+
+export type FormFlowStatus = "idle" | "answering" | "review" | "submitted";
+
+export type FormAnswers = Record<string, string[]>;
+
+export type FormFlowState = {
+  form: ImportedForm | null;
+  steps: DecisionStep[];
+  currentStepIndex: number;
+  answers: FormAnswers;
+  status: FormFlowStatus;
+};
+
+export type FormFlowAction =
+  | { type: "loadForm"; form: ImportedForm }
+  | { type: "answerYes" }
+  | { type: "answerNo" }
+  | { type: "goBack" }
+  | { type: "reset" }
+  | { type: "markSubmitted" };
+
+export function buildDecisionSteps(form: ImportedForm): DecisionStep[] {
+  return form.questions.flatMap((question, questionIndex) =>
+    question.options.map((option, optionIndex) => ({
+      id: `${question.id}:${option.id}`,
+      questionId: question.id,
+      entryId: question.entry_id,
+      questionTitle: question.title,
+      questionType: question.type,
+      optionId: option.id,
+      optionLabel: option.label,
+      questionIndex,
+      optionIndex,
+      totalQuestions: form.questions.length,
+      totalOptions: question.options.length,
+    })),
+  );
+}
+
+export function createInitialFormFlowState(): FormFlowState {
+  return {
+    form: null,
+    steps: [],
+    currentStepIndex: 0,
+    answers: {},
+    status: "idle",
+  };
+}
+
+function advance(state: FormFlowState): FormFlowState {
+  const nextIndex = state.currentStepIndex + 1;
+  if (nextIndex >= state.steps.length) {
+    return { ...state, currentStepIndex: state.steps.length, status: "review" };
+  }
+
+  return { ...state, currentStepIndex: nextIndex };
+}
+
+function recordYes(state: FormFlowState): FormFlowState {
+  const step = state.steps[state.currentStepIndex];
+  if (!step || state.status !== "answering") {
+    return state;
+  }
+
+  const currentAnswers = state.answers[step.questionId] ?? [];
+  const nextQuestionAnswers =
+    step.questionType === "radio"
+      ? [step.optionLabel]
+      : Array.from(new Set([...currentAnswers, step.optionLabel]));
+
+  return advance({
+    ...state,
+    answers: {
+      ...state.answers,
+      [step.questionId]: nextQuestionAnswers,
+    },
+  });
+}
+
+export function formFlowReducer(state: FormFlowState, action: FormFlowAction): FormFlowState {
+  switch (action.type) {
+    case "loadForm": {
+      const steps = buildDecisionSteps(action.form);
+      return {
+        form: action.form,
+        steps,
+        currentStepIndex: 0,
+        answers: {},
+        status: steps.length > 0 ? "answering" : "review",
+      };
+    }
+    case "answerYes":
+      return recordYes(state);
+    case "answerNo":
+      return state.status === "answering" ? advance(state) : state;
+    case "goBack":
+      if (state.status === "idle") {
+        return state;
+      }
+      return {
+        ...state,
+        status: "answering",
+        currentStepIndex: Math.max(0, state.currentStepIndex - 1),
+      };
+    case "markSubmitted":
+      return { ...state, status: "submitted" };
+    case "reset":
+      return createInitialFormFlowState();
+    default:
+      return state;
+  }
+}

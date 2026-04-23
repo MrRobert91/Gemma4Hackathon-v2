@@ -1,24 +1,15 @@
-import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 
+import { BinaryFormPanel } from "./components/BinaryFormPanel";
 import { CalibrationOverlay } from "./components/CalibrationOverlay";
 import { CalibrationPanel } from "./components/CalibrationPanel";
+import { FormImportPanel } from "./components/FormImportPanel";
 import { GazeDiagnosticsPanel } from "./components/GazeDiagnosticsPanel";
-import { QuickPhrases } from "./components/QuickPhrases";
-import { SuggestionBar } from "./components/SuggestionBar";
-import { VirtualKeyboard } from "./components/VirtualKeyboard";
 import { useCameraStream } from "./hooks/useCameraStream";
 import { useDwellSelection } from "./hooks/useDwellSelection";
 import { useGazeProvider } from "./hooks/useGazeProvider";
-import {
-  commitSessionPhrase,
-  fetchPredictions,
-  fetchProfile,
-  requestSpeech,
-  startSession,
-  updateProfile,
-  updateSessionText,
-} from "./lib/api";
-import { applyAction, createInitialComposerState } from "./lib/appState";
+import { importGoogleForm, submitGoogleForm } from "./lib/api";
+import { createInitialFormFlowState, formFlowReducer } from "./lib/formFlow";
 import {
   applyCalibrationToFrame,
   averageFeatureVectors,
@@ -29,12 +20,10 @@ import {
   isFeatureWindowStable,
   type CalibrationModelV2,
 } from "./lib/gazeCalibrationV2";
-import { calibrationPointPercentages, resolveCalibrationTarget } from "./lib/calibration";
+import { resolveCalibrationTarget } from "./lib/calibration";
 import type { ProviderMode } from "./lib/gazeProvider";
-import type { CalibrationSampleV2, GazeFeatureVector, GazeFrame, GazePoint, PredictionResponse, UserProfile } from "./types";
+import type { CalibrationSampleV2, GazeFeatureVector, GazeFrame, GazePoint } from "./types";
 
-const defaultQuickPhrases = ["necesito ayuda", "quiero agua", "me duele"];
-const demoUserId = "demo-user";
 const calibrationHoldMs = 2200;
 const calibrationMinPointMs = 1400;
 const calibrationMaxPointMs = 6500;
@@ -47,19 +36,6 @@ const calibrationFallbackMinFrames = 6;
 const calibrationFallbackQualityMultiplier = 0.8;
 const calibrationSettleMs = 900;
 const calibrationWindowSize = 18;
-
-function keyValueToAction(value: string) {
-  switch (value) {
-    case "space":
-      return { type: "space" } as const;
-    case "backspace":
-      return { type: "backspace" } as const;
-    case "delete-word":
-      return { type: "deleteWord" } as const;
-    default:
-      return { type: "append", value } as const;
-  }
-}
 
 function averageQuality(values: number[]) {
   if (values.length === 0) {
@@ -81,31 +57,30 @@ function clampPointToViewport(point: GazePoint | null) {
 }
 
 export default function App() {
-  const [composerState, dispatch] = useReducer(applyAction, undefined, createInitialComposerState);
+  const [formUrl, setFormUrl] = useState("");
+  const [activeFormUrl, setActiveFormUrl] = useState("");
+  const [formFlow, dispatchFormFlow] = useReducer(formFlowReducer, undefined, createInitialFormFlowState);
   const [providerMode, setProviderMode] = useState<ProviderMode>("mediapipe");
   const [dwellMs, setDwellMs] = useState(850);
   const [highContrast, setHighContrast] = useState(false);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [usePitchAssist, setUsePitchAssist] = useState(true);
   const [invertVerticalAxis, setInvertVerticalAxis] = useState(false);
   const [horizontalSensitivity, setHorizontalSensitivity] = useState(1.2);
   const [verticalSensitivity, setVerticalSensitivity] = useState(1.2);
   const [stabilization, setStabilization] = useState(82);
-  const [predictions, setPredictions] = useState<PredictionResponse>({
-    suggestions: [],
-    quick_phrases: defaultQuickPhrases.map((text) => ({ text, source: "default", score: 1 })),
-  });
-  const [isSpeaking, setIsSpeaking] = useState(false);
-  const [statusMessage, setStatusMessage] = useState("Listo para calibrar.");
+  const [statusMessage, setStatusMessage] = useState("Listo para calibrar e importar un formulario.");
+  const [importingForm, setImportingForm] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [submittingForm, setSubmittingForm] = useState(false);
+  const [submitMessage, setSubmitMessage] = useState<string | null>(null);
   const [calibrationActive, setCalibrationActive] = useState(false);
   const [calibrationIndex, setCalibrationIndex] = useState(0);
   const [calibrationSamples, setCalibrationSamples] = useState<CalibrationSampleV2[]>([]);
   const [calibrationScore, setCalibrationScore] = useState(0);
   const [calibrationModel, setCalibrationModel] = useState<CalibrationModelV2>(createEmptyCalibrationModelV2());
   const [calibrationProgress, setCalibrationProgress] = useState(0);
-  const [audioReady, setAudioReady] = useState(false);
   const [calibrationDebugLogs, setCalibrationDebugLogs] = useState<string[]>([]);
+  const [smoothedPoint, setSmoothedPoint] = useState<GazePoint | null>(null);
 
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<GazeFrame | null>(null);
@@ -114,9 +89,7 @@ export default function App() {
   const featureWindowRef = useRef<GazeFeatureVector[]>([]);
   const qualityWindowRef = useRef<number[]>([]);
   const correctedPointWindowRef = useRef<GazePoint[]>([]);
-  const [smoothedPoint, setSmoothedPoint] = useState<GazePoint | null>(null);
 
-  const deferredText = useDeferredValue(composerState.text);
   const camera = useCameraStream({ enabled: providerMode === "mediapipe" });
   const mappingOptions = useMemo(
     () => ({
@@ -133,6 +106,7 @@ export default function App() {
     mappingOptions,
   });
 
+  const activeStep = formFlow.steps[formFlow.currentStepIndex] ?? null;
   const rawPoint = frame?.rawPoint ?? null;
   const correctedPoint = useMemo(() => {
     if (!frame) {
@@ -174,6 +148,7 @@ export default function App() {
   const actionablePoint = useMemo(() => {
     if (
       calibrationActive ||
+      formFlow.status !== "answering" ||
       !frame ||
       !smoothedPoint ||
       !frame.irisDetected ||
@@ -183,7 +158,7 @@ export default function App() {
     }
 
     return clampPointToViewport(smoothedPoint);
-  }, [calibrationActive, frame, smoothedPoint]);
+  }, [calibrationActive, formFlow.status, frame, smoothedPoint]);
 
   const displayPoint = useMemo(() => {
     if (calibrationActive) {
@@ -192,6 +167,37 @@ export default function App() {
 
     return clampPointToViewport(smoothedPoint ?? correctedPoint);
   }, [calibrationActive, correctedPoint, rawPoint, smoothedPoint]);
+
+  const handleAnswerYes = useCallback(() => {
+    const label = activeStep?.optionLabel;
+    dispatchFormFlow({ type: "answerYes" });
+    setStatusMessage(label ? `Respuesta registrada: Si a "${label}".` : "Respuesta Si registrada.");
+  }, [activeStep?.optionLabel]);
+
+  const handleAnswerNo = useCallback(() => {
+    const label = activeStep?.optionLabel;
+    dispatchFormFlow({ type: "answerNo" });
+    setStatusMessage(label ? `Respuesta registrada: No a "${label}".` : "Respuesta No registrada.");
+  }, [activeStep?.optionLabel]);
+
+  const handleActivateTarget = useCallback(
+    (targetId: string) => {
+      if (targetId === "decision-yes") {
+        handleAnswerYes();
+      }
+      if (targetId === "decision-no") {
+        handleAnswerNo();
+      }
+    },
+    [handleAnswerNo, handleAnswerYes],
+  );
+
+  const { focusedKeyId, dwellProgress, registerTarget, resetDwell } = useDwellSelection({
+    gazePoint: actionablePoint,
+    dwellMs,
+    snapRadius: calibrationModel.sampleCount >= 4 ? 180 : 240,
+    onActivate: handleActivateTarget,
+  });
 
   useEffect(() => {
     frameRef.current = frame;
@@ -231,172 +237,87 @@ export default function App() {
   }, [calibrationSamples]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    void Promise.all([startSession(demoUserId), fetchProfile(demoUserId)])
-      .then(([session, loadedProfile]) => {
-        if (cancelled) {
-          return;
-        }
-
-        setSessionId(session.session_id);
-        setProfile(loadedProfile);
-        setDwellMs(loadedProfile.preferences.dwell_ms);
-        setHighContrast(loadedProfile.preferences.high_contrast);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setStatusMessage("No se pudo cargar el perfil o la sesion del backend.");
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!sessionId) {
-      return;
-    }
-
-    void updateSessionText(sessionId, composerState.text);
-  }, [composerState.text, sessionId]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    void fetchPredictions(deferredText.trim(), demoUserId)
-      .then((response) => {
-        if (!cancelled) {
-          startTransition(() => setPredictions(response));
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setStatusMessage("Prediccion no disponible; usando frases rapidas locales.");
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [deferredText]);
-
-  useEffect(() => {
-    const language = profile?.preferences.language;
-
-    if (!language) {
-      return;
-    }
-
-    void updateProfile(demoUserId, {
-      language,
-      dwell_ms: dwellMs,
-      high_contrast: highContrast,
-    }).then((nextProfile) => setProfile(nextProfile));
-  }, [dwellMs, highContrast, profile?.preferences.language]);
-
-  useEffect(() => {
     if (camera.error) {
       setStatusMessage(`Webcam no disponible: ${camera.error}`);
     }
   }, [camera.error]);
 
-  const handleKeyAction = useCallback((value: string) => {
-    dispatch(keyValueToAction(value));
-  }, []);
-
-  const handleSuggestionSelect = useCallback((value: string) => {
-    dispatch({ type: "applySuggestion", value });
-  }, []);
-
-  const allQuickPhrases = useMemo(() => {
-    const profileQuickPhrases = profile?.quick_phrases ?? [];
-    const unique = new Set<string>();
-
-    return [
-      ...predictions.quick_phrases.map((item) => item.text),
-      ...profileQuickPhrases,
-      ...composerState.recentPhrases,
-      ...defaultQuickPhrases,
-    ]
-      .filter((item) => {
-        if (unique.has(item)) {
-          return false;
-        }
-        unique.add(item);
-        return true;
-      })
-      .slice(0, 6);
-  }, [composerState.recentPhrases, predictions.quick_phrases, profile?.quick_phrases]);
-
-  const handleQuickPhrase = useCallback((phrase: string) => {
-    dispatch({ type: "replaceText", value: phrase });
-  }, []);
-
-  const handleSpeak = useCallback(async () => {
-    const phrase = composerState.text.trim();
-    if (!phrase) {
+  useEffect(() => {
+    if (!formFlow.form) {
+      window.localStorage.removeItem("eyespeak-form-progress");
       return;
     }
 
-    setIsSpeaking(true);
-    setStatusMessage("Generando voz...");
+    window.localStorage.setItem(
+      "eyespeak-form-progress",
+      JSON.stringify({
+        form_id: formFlow.form.form_id,
+        title: formFlow.form.title,
+        answers: formFlow.answers,
+        currentStepIndex: formFlow.currentStepIndex,
+        status: formFlow.status,
+      }),
+    );
+  }, [formFlow.answers, formFlow.currentStepIndex, formFlow.form, formFlow.status]);
+
+  const handleImportForm = useCallback(async () => {
+    const trimmedUrl = formUrl.trim();
+    if (!trimmedUrl) {
+      return;
+    }
+
+    setImportingForm(true);
+    setImportError(null);
+    setSubmitMessage(null);
+    setStatusMessage("Importando formulario de Google Forms...");
 
     try {
-      const response = await requestSpeech(phrase);
-      const audio = new Audio(`data:${response.mime_type};base64,${response.audio_base64}`);
-      setAudioReady(true);
-      await audio.play();
-      setStatusMessage(`Audio reproducido con ${response.provider}.`);
-      dispatch({ type: "commitPhrase" });
-      if (sessionId) {
-        await commitSessionPhrase(sessionId, phrase);
-      }
-      const refreshedProfile = await fetchProfile(demoUserId);
-      setProfile(refreshedProfile);
+      const importedForm = await importGoogleForm(trimmedUrl);
+      setActiveFormUrl(trimmedUrl);
+      dispatchFormFlow({ type: "loadForm", form: importedForm });
+      resetDwell();
+      setStatusMessage(`Formulario importado: ${importedForm.title}.`);
     } catch {
-      setStatusMessage("No se pudo sintetizar la frase.");
+      setImportError("No se pudo importar el formulario. Debe ser publico y tener opciones multiples o casillas.");
+      setStatusMessage("Importacion fallida.");
     } finally {
-      setIsSpeaking(false);
+      setImportingForm(false);
     }
-  }, [composerState.text, sessionId]);
+  }, [formUrl, resetDwell]);
 
-  const handleActivateTarget = useCallback(
-    (targetId: string) => {
-      if (targetId.startsWith("suggestion-")) {
-        const suggestion = predictions.suggestions[Number(targetId.replace("suggestion-", ""))];
-        if (suggestion) {
-          handleSuggestionSelect(suggestion.text);
-        }
-        return;
+  const handleSubmitForm = useCallback(async () => {
+    if (!formFlow.form || !activeFormUrl) {
+      return;
+    }
+
+    setSubmittingForm(true);
+    setSubmitMessage(null);
+    setStatusMessage("Enviando respuestas a Google Forms...");
+
+    try {
+      const response = await submitGoogleForm(activeFormUrl, formFlow.answers);
+      setSubmitMessage(response.message);
+      if (response.submitted) {
+        dispatchFormFlow({ type: "markSubmitted" });
       }
+      setStatusMessage(response.message);
+    } catch {
+      setSubmitMessage("No se pudo enviar. Revisa si el formulario requiere login o usa campos no soportados.");
+      setStatusMessage("Envio fallido.");
+    } finally {
+      setSubmittingForm(false);
+    }
+  }, [activeFormUrl, formFlow.answers, formFlow.form]);
 
-      if (targetId.startsWith("quick-")) {
-        const phrase = allQuickPhrases[Number(targetId.replace("quick-", ""))];
-        if (phrase) {
-          handleQuickPhrase(phrase);
-        }
-        return;
-      }
-
-      if (targetId === "speak") {
-        void handleSpeak();
-        return;
-      }
-
-      handleKeyAction(targetId === "delete-word" ? "delete-word" : targetId);
-    },
-    [allQuickPhrases, handleKeyAction, handleQuickPhrase, handleSpeak, handleSuggestionSelect, predictions.suggestions],
-  );
-
-  const { focusedKeyId, dwellProgress, registerTarget, resetDwell } = useDwellSelection({
-    gazePoint: actionablePoint,
-    dwellMs,
-    snapRadius: calibrationModel.sampleCount >= 4 ? 120 : 170,
-    onActivate: handleActivateTarget,
-  });
+  const handleResetForm = useCallback(() => {
+    dispatchFormFlow({ type: "reset" });
+    setFormUrl("");
+    setActiveFormUrl("");
+    setImportError(null);
+    setSubmitMessage(null);
+    setStatusMessage("Formulario reiniciado.");
+    resetDwell();
+  }, [resetDwell]);
 
   const handleStartCalibration = useCallback(() => {
     setCalibrationActive(true);
@@ -555,6 +476,8 @@ export default function App() {
     };
   }, [appendCalibrationLog, calibrationActive, calibrationIndex]);
 
+  const answeredCount = Object.values(formFlow.answers).reduce((total, values) => total + values.length, 0);
+
   return (
     <div className={`app-shell${highContrast ? " app-shell--contrast" : ""}`}>
       {calibrationActive ? (
@@ -568,10 +491,11 @@ export default function App() {
 
       <header className="hero">
         <div className="hero__copy">
-          <p className="eyebrow">EyeSpeak Gemma</p>
-          <h1>Escribe con la mirada. Habla con claridad.</h1>
+          <p className="eyebrow">EyeSpeak Forms</p>
+          <h1>Responde formularios con la mirada.</h1>
           <p className="hero__lead">
-            MVP web para comunicacion asistida con webcam, face mesh + iris, dwell selection, prediccion contextual con Gemma y TTS.
+            Importa un Google Forms publico y responde cada opcion con una decision binaria: izquierda para No,
+            derecha para Si, centro para descansar.
           </p>
         </div>
 
@@ -646,39 +570,28 @@ export default function App() {
       <main className="workspace">
         <section className="workspace-main">
           <CalibrationPanel calibrated={!calibrationActive && calibrationModel.sampleCount >= 4} onCalibrate={handleStartCalibration} />
-
-          <section className="composer-panel">
-            <header>
-              <p className="eyebrow">Frase actual</p>
-              <h2>{composerState.text.trim().length > 0 ? composerState.text : "Empieza a escribir con la mirada"}</h2>
-            </header>
-            <button
-              ref={registerTarget("speak")}
-              type="button"
-              className={`speak-button${focusedKeyId === "speak" ? " speak-button--focused" : ""}`}
-              onClick={() => void handleSpeak()}
-              disabled={isSpeaking || composerState.text.trim().length === 0}
-            >
-              {isSpeaking ? "Reproduciendo..." : "Hablar"}
-              {focusedKeyId === "speak" ? (
-                <span className="keyboard-key__progress" style={{ transform: `scaleX(${dwellProgress})` }} />
-              ) : null}
-            </button>
-          </section>
-
-          <SuggestionBar
-            suggestions={predictions.suggestions}
-            onSelect={handleSuggestionSelect}
-            focusedKeyId={focusedKeyId}
-            dwellProgress={dwellProgress}
-            registerTarget={registerTarget}
+          <FormImportPanel
+            formUrl={formUrl}
+            importing={importingForm}
+            error={importError}
+            onUrlChange={setFormUrl}
+            onImport={handleImportForm}
           />
-
-          <VirtualKeyboard
-            focusedKeyId={focusedKeyId}
+          <BinaryFormPanel
+            form={formFlow.form}
+            step={activeStep}
+            answers={formFlow.answers}
+            status={formFlow.status}
+            focusedTargetId={focusedKeyId}
             dwellProgress={dwellProgress}
-            onKeyPress={handleKeyAction}
+            submitting={submittingForm}
+            submitMessage={submitMessage}
             registerTarget={registerTarget}
+            onAnswerYes={handleAnswerYes}
+            onAnswerNo={handleAnswerNo}
+            onBack={() => dispatchFormFlow({ type: "goBack" })}
+            onSubmit={handleSubmitForm}
+            onReset={handleResetForm}
           />
         </section>
       </main>
@@ -702,6 +615,9 @@ export default function App() {
             <li>Etapa: {stage}</li>
             <li>{error ?? camera.error ?? "Sin errores detectados"}</li>
             <li>{statusMessage}</li>
+            <li>Formulario: {formFlow.form?.title ?? "sin importar"}</li>
+            <li>Pasos del formulario: {formFlow.steps.length}</li>
+            <li>Respuestas seleccionadas: {answeredCount}</li>
             <li>Score de calibracion: {Math.round(calibrationScore * 100)}%</li>
             <li>Muestras de calibracion: {calibrationModel.sampleCount}</li>
             <li>{usePitchAssist ? "Pitch asistido activo" : "Pitch asistido desactivado"}</li>
@@ -732,14 +648,6 @@ export default function App() {
           </ul>
         </section>
 
-        <QuickPhrases
-          phrases={allQuickPhrases}
-          onSelect={handleQuickPhrase}
-          focusedKeyId={focusedKeyId}
-          dwellProgress={dwellProgress}
-          registerTarget={registerTarget}
-        />
-
         <section className="status-card status-card--debug">
           <p className="eyebrow">Logs Eye Tracking</p>
           <h3>Traza de arranque</h3>
@@ -762,6 +670,7 @@ export default function App() {
             <li>Usa una webcam a la altura de los ojos.</li>
             <li>Manten la cabeza estable durante la calibracion.</li>
             <li>Comprueba en la tarjeta de camara que aparecen mesh, caja facial e iris.</li>
+            <li>Usa la zona central para descansar la vista sin seleccionar respuestas.</li>
           </ul>
         </section>
       </section>
@@ -770,7 +679,7 @@ export default function App() {
         <strong>Seguimiento visual</strong>
         <span>{calibrationModel.sampleCount >= 4 ? "calibrada" : calibrationActive ? "sin calibrar" : "sin calibrar"}</span>
         <span>{ready ? providerLabel : "inicializando proveedor"}</span>
-        <span>{displayPoint ? `X ${Math.round(displayPoint.x)} · Y ${Math.round(displayPoint.y)}` : "Esperando coordenadas de mirada"}</span>
+        <span>{displayPoint ? `X ${Math.round(displayPoint.x)} - Y ${Math.round(displayPoint.y)}` : "Esperando coordenadas de mirada"}</span>
         <span>{frame?.irisDetected ? `Confianza ${Math.round(frame.confidence * 100)}%` : "Esperando landmarks de iris"}</span>
       </div>
 
@@ -780,8 +689,6 @@ export default function App() {
           <span className="gaze-cursor__dot" />
         </div>
       ) : null}
-
-      {audioReady ? <div className="sr-only">Audio listo</div> : null}
     </div>
   );
 }

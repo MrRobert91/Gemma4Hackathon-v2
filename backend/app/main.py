@@ -3,12 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.config import Settings
 from app.services.gemma import BaseGemmaReranker, RerankRequest, RerankResponse, build_gemma_reranker
+from app.services.google_forms import GoogleFormError, import_google_form, submit_google_form
 from app.services.predictor import PredictionRequest, PredictionResponse, SuggestionEngine
 from app.services.profiles import ProfilePreferences, SqliteProfileStore, UserProfile
 from app.services.session_store import InMemorySessionStore, Session, SessionSnapshot
@@ -25,6 +26,15 @@ class SessionTextRequest(BaseModel):
 
 class SessionCommitRequest(BaseModel):
     phrase: str
+
+
+class GoogleFormImportRequest(BaseModel):
+    url: str
+
+
+class GoogleFormSubmitRequest(BaseModel):
+    url: str
+    answers: dict[str, list[str]]
 
 
 def build_default_engine() -> SuggestionEngine:
@@ -182,6 +192,25 @@ def create_app(
     @app.put("/api/profiles/{user_id}", response_model=UserProfile)
     def update_profile(user_id: str, payload: ProfilePreferences) -> UserProfile:
         return profiles.upsert_preferences(user_id, payload)
+
+    @app.post("/api/google-forms/import")
+    def import_google_form_endpoint(payload: GoogleFormImportRequest):
+        try:
+            return import_google_form(payload.url)
+        except GoogleFormError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="No se pudo leer el formulario de Google Forms.") from exc
+
+    @app.post("/api/google-forms/submit")
+    def submit_google_form_endpoint(payload: GoogleFormSubmitRequest):
+        try:
+            imported_form = import_google_form(payload.url)
+            return submit_google_form(imported_form, payload.answers)
+        except GoogleFormError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="No se pudo enviar el formulario a Google Forms.") from exc
 
     return app
 

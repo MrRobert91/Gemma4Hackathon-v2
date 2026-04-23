@@ -1,32 +1,3 @@
-export type SuggestionItem = {
-  text: string;
-  source: string;
-  score: number;
-};
-
-export type PredictionResponse = {
-  suggestions: SuggestionItem[];
-  quick_phrases: SuggestionItem[];
-};
-
-export type TTSResponse = {
-  mime_type: string;
-  audio_base64: string;
-  provider: string;
-};
-
-export type ProfilePreferences = {
-  language: string;
-  dwell_ms: number;
-  high_contrast: boolean;
-};
-
-export type UserProfile = {
-  user_id: string;
-  preferences: ProfilePreferences;
-  quick_phrases: string[];
-};
-
 export type GazePoint = {
   x: number;
   y: number;
@@ -103,4 +74,46 @@ export type RawGazeMappingOptions = {
   pitchWeight: number;
   usePitchAssist: boolean;
   invertVertical: boolean;
+};
+
+export type FormQuestionType = "radio" | "checkbox";
+
+export type FormOption = {
+  id: string;
+  label: string;
+};
+
+export type FormQuestion = {
+  id: string;
+  entry_id: string;
+  title: string;
+  type: FormQuestionType;
+  options: FormOption[];
+};
+
+export type ImportedForm = {
+  form_id: string;
+  title: string;
+  submit_url: string;
+  questions: FormQuestion[];
+};
+
+export type DecisionStep = {
+  id: string;
+  questionId: string;
+  entryId: string;
+  questionTitle: string;
+  questionType: FormQuestionType;
+  optionId: string;
+  optionLabel: string;
+  questionIndex: number;
+  optionIndex: number;
+  totalQuestions: number;
+  totalOptions: number;
+};
+
+export type GoogleFormSubmitResponse = {
+  submitted: boolean;
+  status_code: number;
+  message: string;
 };
