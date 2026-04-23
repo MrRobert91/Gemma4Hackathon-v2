@@ -130,3 +130,32 @@ def test_google_forms_submit_endpoint_posts_answers(monkeypatch):
 
     assert response.status_code == 200
     assert response.json()["submitted"] is True
+
+
+def test_generic_forms_import_endpoint_routes_by_url(monkeypatch):
+    form = ImportedGoogleForm(
+        form_id="abc123",
+        title="Cuestionario diario",
+        submit_url="https://docs.google.com/forms/d/e/abc123/formResponse",
+        questions=[],
+    )
+    monkeypatch.setattr("app.main.import_external_form", lambda url: form)
+    client = TestClient(create_app(gemma_reranker=NoopGemmaReranker()))
+
+    response = client.post("/api/forms/import", json={"url": "https://forms.office.com/r/abc123"})
+
+    assert response.status_code == 200
+    assert response.json()["title"] == "Cuestionario diario"
+
+
+def test_generic_forms_submit_endpoint_routes_by_provider(monkeypatch):
+    monkeypatch.setattr("app.main.submit_external_form", lambda url, answers: {"submitted": True, "status_code": 200, "message": "Formulario enviado."})
+    client = TestClient(create_app(gemma_reranker=NoopGemmaReranker()))
+
+    response = client.post(
+        "/api/forms/submit",
+        json={"url": "https://forms.office.com/r/abc123", "answers": {"q1": ["No"]}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["submitted"] is True

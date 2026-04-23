@@ -269,7 +269,7 @@ export default function App() {
     setImportingForm(true);
     setImportError(null);
     setSubmitMessage(null);
-    setStatusMessage("Importando formulario de Google Forms...");
+    setStatusMessage("Importando formulario...");
 
     try {
       const importedForm = await importGoogleForm(trimmedUrl);
@@ -278,7 +278,7 @@ export default function App() {
       resetDwell();
       setStatusMessage(`Formulario importado: ${importedForm.title}.`);
     } catch {
-      setImportError("No se pudo importar el formulario. Debe ser publico y tener opciones multiples o casillas.");
+      setImportError("No se pudo importar el formulario. Debe ser publico, de Google/Microsoft Forms y tener opciones multiples o casillas.");
       setStatusMessage("Importacion fallida.");
     } finally {
       setImportingForm(false);
@@ -494,7 +494,7 @@ export default function App() {
           <p className="eyebrow">EyeSpeak Forms</p>
           <h1>Responde formularios con la mirada.</h1>
           <p className="hero__lead">
-            Importa un Google Forms publico y responde cada opcion con una decision binaria: izquierda para No,
+            Importa un Google Forms o Microsoft Forms publico y responde cada opcion con una decision binaria: izquierda para No,
             derecha para Si, centro para descansar.
           </p>
         </div>
@@ -616,6 +616,7 @@ export default function App() {
             <li>{error ?? camera.error ?? "Sin errores detectados"}</li>
             <li>{statusMessage}</li>
             <li>Formulario: {formFlow.form?.title ?? "sin importar"}</li>
+            <li>Proveedor: {formFlow.form?.provider ?? "--"}</li>
             <li>Pasos del formulario: {formFlow.steps.length}</li>
             <li>Respuestas seleccionadas: {answeredCount}</li>
             <li>Score de calibracion: {Math.round(calibrationScore * 100)}%</li>

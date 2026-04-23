@@ -34,6 +34,7 @@ class ImportedGoogleForm:
     title: str
     submit_url: str
     questions: list[GoogleFormQuestion]
+    provider: str = "google"
 
 
 @dataclass(slots=True)

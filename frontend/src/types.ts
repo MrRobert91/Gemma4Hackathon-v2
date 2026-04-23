@@ -92,6 +92,7 @@ export type FormQuestion = {
 };
 
 export type ImportedForm = {
+  provider: "google" | "microsoft";
   form_id: string;
   title: string;
   submit_url: string;

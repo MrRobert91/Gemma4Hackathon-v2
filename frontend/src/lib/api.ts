@@ -10,7 +10,7 @@ async function parseJson<T>(response: Response): Promise<T> {
 }
 
 export async function importGoogleForm(url: string): Promise<ImportedForm> {
-  const response = await fetch(`${apiBaseUrl}/api/google-forms/import`, {
+  const response = await fetch(`${apiBaseUrl}/api/forms/import`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url }),
@@ -19,7 +19,7 @@ export async function importGoogleForm(url: string): Promise<ImportedForm> {
 }
 
 export async function submitGoogleForm(url: string, answers: Record<string, string[]>): Promise<GoogleFormSubmitResponse> {
-  const response = await fetch(`${apiBaseUrl}/api/google-forms/submit`, {
+  const response = await fetch(`${apiBaseUrl}/api/forms/submit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url, answers }),

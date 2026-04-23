@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.config import Settings
+from app.services.external_forms import import_external_form, submit_external_form
 from app.services.gemma import BaseGemmaReranker, RerankRequest, RerankResponse, build_gemma_reranker
 from app.services.google_forms import GoogleFormError, import_google_form, submit_google_form
 from app.services.predictor import PredictionRequest, PredictionResponse, SuggestionEngine
@@ -211,6 +212,24 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=502, detail="No se pudo enviar el formulario a Google Forms.") from exc
+
+    @app.post("/api/forms/import")
+    def import_form_endpoint(payload: GoogleFormImportRequest):
+        try:
+            return import_external_form(payload.url)
+        except GoogleFormError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="No se pudo leer el formulario.") from exc
+
+    @app.post("/api/forms/submit")
+    def submit_form_endpoint(payload: GoogleFormSubmitRequest):
+        try:
+            return submit_external_form(payload.url, payload.answers)
+        except GoogleFormError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="No se pudo enviar el formulario.") from exc
 
     return app
 

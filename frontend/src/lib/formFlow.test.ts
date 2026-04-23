@@ -2,6 +2,7 @@ import { buildDecisionSteps, createInitialFormFlowState, formFlowReducer } from 
 import type { ImportedForm } from "../types";
 
 const sampleForm: ImportedForm = {
+  provider: "google",
   form_id: "abc123",
   title: "Cuestionario diario",
   submit_url: "https://docs.google.com/forms/d/e/abc123/formResponse",
