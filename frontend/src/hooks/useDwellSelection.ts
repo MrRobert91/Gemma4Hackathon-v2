@@ -11,6 +11,30 @@ type UseDwellSelectionOptions = {
   resolveTargetId?: (gazePoint: GazePoint | null, targets: FocusableTarget[]) => string | null;
 };
 
+type ResolveActiveTargetIdOptions = {
+  gazePoint: GazePoint | null;
+  targets: FocusableTarget[];
+  snapRadius: number;
+  resolveTargetId?: (gazePoint: GazePoint | null, targets: FocusableTarget[]) => string | null;
+};
+
+export function resolveActiveTargetId({
+  gazePoint,
+  targets,
+  snapRadius,
+  resolveTargetId,
+}: ResolveActiveTargetIdOptions): string | null {
+  if (!gazePoint) {
+    return null;
+  }
+
+  if (resolveTargetId) {
+    return resolveTargetId(gazePoint, targets);
+  }
+
+  return resolveFocusTarget(targets, gazePoint, snapRadius)?.id ?? null;
+}
+
 export function useDwellSelection({
   gazePoint,
   dwellMs,
@@ -42,7 +66,12 @@ export function useDwellSelection({
       };
     });
 
-    const nextTargetId = resolveTargetId?.(gazePoint, targets) ?? resolveFocusTarget(targets, gazePoint, snapRadius)?.id ?? null;
+    const nextTargetId = resolveActiveTargetId({
+      gazePoint,
+      targets,
+      snapRadius,
+      resolveTargetId,
+    });
 
     setFocusedKeyId((previousTargetId) => {
       const now = performance.now();
