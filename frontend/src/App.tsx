@@ -199,10 +199,7 @@ export default function App() {
     dwellMs,
     snapRadius: calibrationModel.sampleCount >= 4 ? 180 : 240,
     onActivate: handleActivateTarget,
-    resolveTargetId: (gazePoint) =>
-      resolveBinaryDecisionTarget(gazePoint, window.innerWidth, {
-        centerDeadZoneRatio: neutralZonePercent / 100,
-      }),
+    resolveTargetId: (gazePoint, targets) => resolveBinaryDecisionTarget(gazePoint, targets),
   });
 
   useEffect(() => {
@@ -602,6 +599,7 @@ export default function App() {
             status={formFlow.status}
             focusedTargetId={focusedKeyId}
             dwellProgress={dwellProgress}
+            neutralZonePercent={neutralZonePercent}
             submitting={submittingForm}
             submitMessage={submitMessage}
             registerTarget={registerTarget}

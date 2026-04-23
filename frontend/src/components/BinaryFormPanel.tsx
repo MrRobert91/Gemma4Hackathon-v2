@@ -1,5 +1,6 @@
-import type { RefCallback } from "react";
+import type { CSSProperties, RefCallback } from "react";
 
+import { buildDecisionGridColumns } from "../lib/decisionZone";
 import type { DecisionStep, ImportedForm } from "../types";
 import type { FormAnswers, FormFlowStatus } from "../lib/formFlow";
 
@@ -10,6 +11,7 @@ type BinaryFormPanelProps = {
   status: FormFlowStatus;
   focusedTargetId: string | null;
   dwellProgress: number;
+  neutralZonePercent: number;
   submitting: boolean;
   submitMessage: string | null;
   registerTarget: (id: string) => RefCallback<HTMLElement>;
@@ -27,6 +29,7 @@ export function BinaryFormPanel({
   status,
   focusedTargetId,
   dwellProgress,
+  neutralZonePercent,
   submitting,
   submitMessage,
   registerTarget,
@@ -85,6 +88,8 @@ export function BinaryFormPanel({
 
   const noFocused = focusedTargetId === "decision-no";
   const yesFocused = focusedTargetId === "decision-yes";
+  const [leftWidth, centerWidth, rightWidth] = buildDecisionGridColumns(neutralZonePercent);
+  const gridStyle: CSSProperties = { gridTemplateColumns: `${leftWidth} ${centerWidth} ${rightWidth}` };
 
   return (
     <section className="binary-panel" aria-label="Respuesta binaria">
@@ -96,7 +101,7 @@ export function BinaryFormPanel({
         <p>{step.optionLabel}</p>
       </header>
 
-      <div className="binary-decision-grid">
+      <div className="binary-decision-grid" style={gridStyle}>
         <button
           ref={registerTarget("decision-no")}
           type="button"

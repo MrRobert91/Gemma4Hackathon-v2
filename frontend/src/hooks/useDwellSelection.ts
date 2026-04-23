@@ -8,7 +8,7 @@ type UseDwellSelectionOptions = {
   dwellMs: number;
   snapRadius: number;
   onActivate: (targetId: string) => void;
-  resolveTargetId?: (gazePoint: GazePoint | null) => string | null;
+  resolveTargetId?: (gazePoint: GazePoint | null, targets: FocusableTarget[]) => string | null;
 };
 
 export function useDwellSelection({
@@ -31,23 +31,18 @@ export function useDwellSelection({
       return;
     }
 
-    const nextTargetId =
-      resolveTargetId?.(gazePoint) ??
-      resolveFocusTarget(
-        Array.from(targetsRef.current.entries()).map(([id, element]) => {
-          const rect = element.getBoundingClientRect();
-          return {
-            id,
-            x: rect.left,
-            y: rect.top,
-            width: rect.width,
-            height: rect.height,
-          };
-        }),
-        gazePoint,
-        snapRadius,
-      )?.id ??
-      null;
+    const targets: FocusableTarget[] = Array.from(targetsRef.current.entries()).map(([id, element]) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        id,
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+      };
+    });
+
+    const nextTargetId = resolveTargetId?.(gazePoint, targets) ?? resolveFocusTarget(targets, gazePoint, snapRadius)?.id ?? null;
 
     setFocusedKeyId((previousTargetId) => {
       const now = performance.now();

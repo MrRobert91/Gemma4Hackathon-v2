@@ -1,29 +1,34 @@
+import type { FocusableTarget } from "./selection";
 import type { GazePoint } from "../types";
 
-type DecisionZoneOptions = {
-  centerDeadZoneRatio?: number;
-  invertHorizontal?: boolean;
-};
+function containsPoint(target: FocusableTarget, point: GazePoint): boolean {
+  return (
+    point.x >= target.x &&
+    point.x <= target.x + target.width &&
+    point.y >= target.y &&
+    point.y <= target.y + target.height
+  );
+}
 
 export function resolveBinaryDecisionTarget(
   gazePoint: GazePoint | null,
-  viewportWidth: number,
-  options: DecisionZoneOptions = {},
+  targets: readonly FocusableTarget[],
 ): "decision-no" | "decision-yes" | null {
-  if (!gazePoint || viewportWidth <= 0) {
+  if (!gazePoint) {
     return null;
   }
 
-  const { centerDeadZoneRatio = 0.24, invertHorizontal = true } = options;
-  const normalizedX = Math.min(Math.max(gazePoint.x / viewportWidth, 0), 1);
-  const effectiveX = invertHorizontal ? 1 - normalizedX : normalizedX;
-  const deadZoneHalf = centerDeadZoneRatio / 2;
-  const centerStart = 0.5 - deadZoneHalf;
-  const centerEnd = 0.5 + deadZoneHalf;
-
-  if (effectiveX >= centerStart && effectiveX <= centerEnd) {
-    return null;
+  for (const target of targets) {
+    if ((target.id === "decision-no" || target.id === "decision-yes") && containsPoint(target, gazePoint)) {
+      return target.id;
+    }
   }
 
-  return effectiveX < centerStart ? "decision-no" : "decision-yes";
+  return null;
+}
+
+export function buildDecisionGridColumns(restPercent: number): [string, string, string] {
+  const boundedRest = Math.min(Math.max(restPercent, 10), 40);
+  const sidePercent = (100 - boundedRest) / 2;
+  return [`${sidePercent}%`, `${boundedRest}%`, `${sidePercent}%`];
 }
