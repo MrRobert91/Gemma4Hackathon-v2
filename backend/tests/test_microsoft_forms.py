@@ -2,6 +2,7 @@ import httpx
 
 from app.services.microsoft_forms import (
     extract_microsoft_form_id,
+    import_microsoft_form,
     import_microsoft_form_from_html,
     import_microsoft_form_from_runtime_json,
     submit_microsoft_form,
@@ -86,6 +87,90 @@ def test_import_microsoft_form_from_runtime_json_maps_question_info_choices():
     assert [option.label for option in form.questions[0].options] == ["Nunca", "1 a 3 veces"]
     assert form.questions[1].type == "checkbox"
     assert [option.label for option in form.questions[1].options] == ["Mas apoyo", "Mejor transporte"]
+
+
+def test_import_microsoft_form_from_runtime_json_sorts_questions_by_order():
+    form = import_microsoft_form_from_runtime_json(
+        "runtime-form-123",
+        {
+            "title": "Orden",
+            "questions": [
+                {
+                    "id": "q-b",
+                    "title": "Segunda",
+                    "order": 200,
+                    "type": "Question.Choice",
+                    "questionInfo": "{\"Choices\":[{\"Description\":\"B\"}],\"ChoiceType\":1}",
+                },
+                {
+                    "id": "q-a",
+                    "title": "Primera",
+                    "order": 100,
+                    "type": "Question.Choice",
+                    "questionInfo": "{\"Choices\":[{\"Description\":\"A\"}],\"ChoiceType\":1}",
+                },
+            ],
+        },
+    )
+
+    assert [question.title for question in form.questions] == ["Primera", "Segunda"]
+
+
+def test_import_microsoft_form_prefers_runtime_payload_over_ambiguous_html():
+    html = """
+    <html>
+      <body>
+        <script>
+          window.__MS_FORMS_BOOTSTRAP__ = {
+            "title": "HTML ambiguo",
+            "questions": [
+              {
+                "id": "html-q",
+                "title": "Pregunta HTML",
+                "type": "Question.Choice",
+                "questionInfo": "{\\"Choices\\":[{\\"Description\\":\\"HTML\\"}],\\"ChoiceType\\":1}"
+              }
+            ]
+          };
+          window.__RUNTIME__ = {
+            "prefetchFormUrl": "https://forms.cloud.microsoft/formapi/api/runtimeForms(\\u0027demo\\u0027)?$expand=questions($expand=choices)"
+          };
+        </script>
+      </body>
+    </html>
+    """
+    runtime_json = {
+        "title": "Runtime correcto",
+        "questions": [
+            {
+                "id": "runtime-b",
+                "title": "Segunda",
+                "order": 200,
+                "type": "Question.Choice",
+                "questionInfo": "{\"Choices\":[{\"Description\":\"B\"}],\"ChoiceType\":1}",
+            },
+            {
+                "id": "runtime-a",
+                "title": "Primera",
+                "order": 100,
+                "type": "Question.Choice",
+                "questionInfo": "{\"Choices\":[{\"Description\":\"A\"}],\"ChoiceType\":1}",
+            },
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "runtimeForms('demo')" in str(request.url):
+            return httpx.Response(200, json=runtime_json)
+        return httpx.Response(200, text=html)
+
+    form = import_microsoft_form(
+        "https://forms.cloud.microsoft/e/demo",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    assert form.title == "Runtime correcto"
+    assert [question.title for question in form.questions] == ["Primera", "Segunda"]
 
 
 def test_submit_microsoft_form_posts_answer_payload():

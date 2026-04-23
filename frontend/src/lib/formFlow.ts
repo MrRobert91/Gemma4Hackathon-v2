@@ -57,7 +57,19 @@ function advance(state: FormFlowState): FormFlowState {
   return { ...state, currentStepIndex: nextIndex };
 }
 
-function recordYes(state: FormFlowState): FormFlowState {
+function advancePastRadioQuestion(state: FormFlowState, questionId: string): FormFlowState {
+  const nextIndex = state.steps.findIndex(
+    (step, index) => index > state.currentStepIndex && step.questionId !== questionId,
+  );
+
+  if (nextIndex === -1) {
+    return { ...state, currentStepIndex: state.steps.length, status: "review" };
+  }
+
+  return { ...state, currentStepIndex: nextIndex };
+}
+
+function recordYesAndAdvance(state: FormFlowState): FormFlowState {
   const step = state.steps[state.currentStepIndex];
   if (!step || state.status !== "answering") {
     return state;
@@ -69,13 +81,15 @@ function recordYes(state: FormFlowState): FormFlowState {
       ? [step.optionLabel]
       : Array.from(new Set([...currentAnswers, step.optionLabel]));
 
-  return advance({
+  const nextState = {
     ...state,
     answers: {
       ...state.answers,
       [step.questionId]: nextQuestionAnswers,
     },
-  });
+  };
+
+  return step.questionType === "radio" ? advancePastRadioQuestion(nextState, step.questionId) : advance(nextState);
 }
 
 export function formFlowReducer(state: FormFlowState, action: FormFlowAction): FormFlowState {
@@ -91,7 +105,7 @@ export function formFlowReducer(state: FormFlowState, action: FormFlowAction): F
       };
     }
     case "answerYes":
-      return recordYes(state);
+      return recordYesAndAdvance(state);
     case "answerNo":
       return state.status === "answering" ? advance(state) : state;
     case "goBack":

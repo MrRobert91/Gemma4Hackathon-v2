@@ -61,9 +61,20 @@ describe("form flow", () => {
     state = formFlowReducer(state, { type: "answerNo" });
     state = formFlowReducer(state, { type: "answerNo" });
     state = formFlowReducer(state, { type: "answerYes" });
-    state = formFlowReducer(state, { type: "answerYes" });
 
     expect(state.status).toBe("review");
-    expect(state.answers.q2).toEqual(["No"]);
+    expect(state.answers.q2).toEqual(["Si"]);
+  });
+
+  it("skips the remaining radio options after the first yes", () => {
+    let state = formFlowReducer(createInitialFormFlowState(), { type: "loadForm", form: sampleForm });
+
+    state = formFlowReducer(state, { type: "answerNo" });
+    state = formFlowReducer(state, { type: "answerNo" });
+    state = formFlowReducer(state, { type: "answerYes" });
+
+    expect(state.currentStepIndex).toBe(4);
+    expect(state.status).toBe("review");
+    expect(state.answers.q2).toEqual(["Si"]);
   });
 });

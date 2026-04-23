@@ -295,7 +295,7 @@ export default function App() {
 
     setSubmittingForm(true);
     setSubmitMessage(null);
-    setStatusMessage("Enviando respuestas a Google Forms...");
+    setStatusMessage("Enviando respuestas al formulario...");
 
     try {
       const response = await submitGoogleForm(activeFormUrl, formFlow.answers);
@@ -480,6 +480,8 @@ export default function App() {
   }, [appendCalibrationLog, calibrationActive, calibrationIndex]);
 
   const answeredCount = Object.values(formFlow.answers).reduce((total, values) => total + values.length, 0);
+  const compatibleQuestionCount = formFlow.form?.questions.length ?? 0;
+  const binaryStepCount = formFlow.steps.length;
 
   return (
     <div className={`app-shell${highContrast ? " app-shell--contrast" : ""}`}>
@@ -633,7 +635,8 @@ export default function App() {
             <li>{statusMessage}</li>
             <li>Formulario: {formFlow.form?.title ?? "sin importar"}</li>
             <li>Proveedor: {formFlow.form?.provider ?? "--"}</li>
-            <li>Pasos del formulario: {formFlow.steps.length}</li>
+            <li>Preguntas compatibles: {compatibleQuestionCount}</li>
+            <li>Pasos binarios: {binaryStepCount}</li>
             <li>Respuestas seleccionadas: {answeredCount}</li>
             <li>Zona neutra central: {neutralZonePercent}%</li>
             <li>Score de calibracion: {Math.round(calibrationScore * 100)}%</li>

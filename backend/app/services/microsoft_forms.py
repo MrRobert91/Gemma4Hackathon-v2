@@ -161,9 +161,12 @@ def import_microsoft_form_from_runtime_json(form_id: str, data: dict[str, Any]) 
     questions: list[GoogleFormQuestion] = []
     seen_questions: set[str] = set()
 
-    for raw_question in data.get("questions", []):
-        if not isinstance(raw_question, dict):
-            continue
+    sorted_questions = sorted(
+        [question for question in data.get("questions", []) if isinstance(question, dict)],
+        key=lambda question: (question.get("order") is None, question.get("order", 0)),
+    )
+
+    for raw_question in sorted_questions:
         question = _question_from_dict(raw_question)
         if question and question.id not in seen_questions:
             seen_questions.add(question.id)
@@ -222,7 +225,11 @@ def _extract_prefetch_form_url(html: str) -> str | None:
     match = re.search(r'"prefetchFormUrl"\s*:\s*"(.*?)"', html)
     if not match:
         return None
-    return match.group(1).encode("utf-8").decode("unicode_escape")
+    raw_value = match.group(1)
+    try:
+        return json.loads(f'"{raw_value}"')
+    except json.JSONDecodeError:
+        return raw_value.encode("utf-8").decode("unicode_escape")
 
 
 def import_microsoft_form(url: str, client: httpx.Client | None = None) -> ImportedGoogleForm:
@@ -232,15 +239,19 @@ def import_microsoft_form(url: str, client: httpx.Client | None = None) -> Impor
     try:
         response = http_client.get(url, headers={"User-Agent": "Mozilla/5.0"})
         response.raise_for_status()
-        try:
-            return import_microsoft_form_from_html(form_id, response.text)
-        except GoogleFormError:
-            prefetch_url = _extract_prefetch_form_url(response.text)
-            if not prefetch_url:
-                raise
-            runtime_response = http_client.get(prefetch_url, headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"})
-            runtime_response.raise_for_status()
-            return import_microsoft_form_from_runtime_json(form_id, runtime_response.json())
+        prefetch_url = _extract_prefetch_form_url(response.text)
+        if prefetch_url:
+            try:
+                runtime_response = http_client.get(
+                    prefetch_url,
+                    headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"},
+                )
+                runtime_response.raise_for_status()
+                return import_microsoft_form_from_runtime_json(form_id, runtime_response.json())
+            except (httpx.HTTPError, ValueError, GoogleFormError):
+                pass
+
+        return import_microsoft_form_from_html(form_id, response.text)
     finally:
         if owns_client:
             http_client.close()
