@@ -26,6 +26,7 @@ docker compose up --build
 
 ```bash
 cd frontend
+copy .env.example .env
 npm install
 npm run dev
 ```
@@ -127,3 +128,21 @@ uvicorn app.main:app --reload
 ```bash
 docker compose up --build
 ```
+
+## Despliegue con hosts publicos separados
+
+Frontend:
+
+```env
+VITE_API_BASE_URL=https://tu-backend-publico.example.com
+```
+
+Backend:
+
+```env
+ALLOWED_ORIGINS=https://tu-frontend-publico.example.com
+```
+
+Si necesitas varios orígenes en backend, sepáralos por comas en `ALLOWED_ORIGINS`.
+
+En Sliplane no necesitas `build args` para esto. Define `VITE_API_BASE_URL` como variable de entorno del servicio frontend. El contenedor nginx la inyecta en runtime en `/env-config.js`, y la SPA la lee al cargar.

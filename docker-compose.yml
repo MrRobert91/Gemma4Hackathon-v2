@@ -7,7 +7,7 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      ALLOWED_ORIGINS: http://localhost:3000,http://localhost:8080
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8080}
       GEMMA_BASE_URL: ${GEMMA_BASE_URL:-http://host.docker.internal:11434/v1}
       GEMMA_API_KEY: ${GEMMA_API_KEY:-unused}
       HF_TOKEN: ${HF_TOKEN:-}
@@ -21,6 +21,8 @@ services:
       context: ./frontend
     depends_on:
       - backend
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
     ports:
       - "3000:80"
 
