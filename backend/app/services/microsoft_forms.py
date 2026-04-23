@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from urllib.parse import urlparse, parse_qs
 
@@ -25,7 +26,7 @@ def extract_microsoft_form_id(url: str) -> str:
         raise GoogleFormError("La URL no parece pertenecer a Microsoft Forms.")
 
     parts = [part for part in parsed.path.split("/") if part]
-    if len(parts) >= 2 and parts[0].lower() == "r":
+    if len(parts) >= 2 and parts[0].lower() in {"r", "e"}:
         return parts[1]
 
     query = parse_qs(parsed.query)
@@ -97,12 +98,23 @@ def _choice_label(choice: Any) -> str | None:
     if isinstance(choice, str):
         return choice
     if isinstance(choice, dict):
-        return _first_string(choice, ("title", "text", "label", "displayText", "name"))
+        return _first_string(choice, ("title", "text", "label", "displayText", "name", "Description", "FormsProDisplayRTText"))
     return None
 
 
 def _question_from_dict(node: dict[str, Any]) -> GoogleFormQuestion | None:
     raw_choices = node.get("choices") or node.get("options") or node.get("answers")
+    question_info = node.get("questionInfo")
+    parsed_question_info: dict[str, Any] = {}
+    if isinstance(question_info, str) and question_info.strip():
+        try:
+            parsed_question_info = json.loads(question_info)
+        except json.JSONDecodeError:
+            parsed_question_info = {}
+
+    if (not raw_choices) and isinstance(parsed_question_info.get("Choices"), list):
+        raw_choices = parsed_question_info["Choices"]
+
     if not isinstance(raw_choices, list):
         return None
 
@@ -119,7 +131,14 @@ def _question_from_dict(node: dict[str, Any]) -> GoogleFormQuestion | None:
     if "choice" not in raw_type and "radio" not in raw_type and "checkbox" not in raw_type and "single" not in raw_type and "multi" not in raw_type:
         return None
 
-    allow_multiple = bool(node.get("allowMultiple") or node.get("isMultipleChoice") or "multi" in raw_type or "checkbox" in raw_type)
+    choice_type = parsed_question_info.get("ChoiceType")
+    allow_multiple = bool(
+        node.get("allowMultiple")
+        or node.get("isMultipleChoice")
+        or choice_type == 2
+        or "multi" in raw_type
+        or "checkbox" in raw_type
+    )
 
     return GoogleFormQuestion(
         id=question_id,
@@ -133,6 +152,32 @@ def _question_from_dict(node: dict[str, Any]) -> GoogleFormQuestion | None:
             )
             for index, label in enumerate(labels)
         ],
+    )
+
+
+def import_microsoft_form_from_runtime_json(form_id: str, data: dict[str, Any]) -> ImportedGoogleForm:
+    title = _first_string(data, ("title", "formTitle", "name")) or "Microsoft Forms"
+    submit_url = _first_string(data, ("submitUrl", "responsePostUrl", "postUrl", "submitURL")) or ""
+    questions: list[GoogleFormQuestion] = []
+    seen_questions: set[str] = set()
+
+    for raw_question in data.get("questions", []):
+        if not isinstance(raw_question, dict):
+            continue
+        question = _question_from_dict(raw_question)
+        if question and question.id not in seen_questions:
+            seen_questions.add(question.id)
+            questions.append(question)
+
+    if not questions:
+        raise GoogleFormError("El formulario de Microsoft no contiene preguntas de opcion compatibles.")
+
+    return ImportedGoogleForm(
+        form_id=form_id,
+        provider="microsoft",
+        title=title,
+        submit_url=submit_url,
+        questions=questions,
     )
 
 
@@ -173,6 +218,13 @@ def import_microsoft_form_from_html(form_id: str, html: str) -> ImportedGoogleFo
     )
 
 
+def _extract_prefetch_form_url(html: str) -> str | None:
+    match = re.search(r'"prefetchFormUrl"\s*:\s*"(.*?)"', html)
+    if not match:
+        return None
+    return match.group(1).encode("utf-8").decode("unicode_escape")
+
+
 def import_microsoft_form(url: str, client: httpx.Client | None = None) -> ImportedGoogleForm:
     form_id = extract_microsoft_form_id(url)
     owns_client = client is None
@@ -180,7 +232,15 @@ def import_microsoft_form(url: str, client: httpx.Client | None = None) -> Impor
     try:
         response = http_client.get(url, headers={"User-Agent": "Mozilla/5.0"})
         response.raise_for_status()
-        return import_microsoft_form_from_html(form_id, response.text)
+        try:
+            return import_microsoft_form_from_html(form_id, response.text)
+        except GoogleFormError:
+            prefetch_url = _extract_prefetch_form_url(response.text)
+            if not prefetch_url:
+                raise
+            runtime_response = http_client.get(prefetch_url, headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"})
+            runtime_response.raise_for_status()
+            return import_microsoft_form_from_runtime_json(form_id, runtime_response.json())
     finally:
         if owns_client:
             http_client.close()

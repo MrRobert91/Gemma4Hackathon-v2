@@ -3,6 +3,7 @@ import httpx
 from app.services.microsoft_forms import (
     extract_microsoft_form_id,
     import_microsoft_form_from_html,
+    import_microsoft_form_from_runtime_json,
     submit_microsoft_form,
 )
 
@@ -37,9 +38,31 @@ SAMPLE_MICROSOFT_HTML = """
 </html>
 """
 
+SAMPLE_MICROSOFT_RUNTIME_JSON = {
+    "id": "runtime-form-123",
+    "title": "CUESTIONARIO SOBRE OCIO Y TIEMPO LIBRE",
+    "questions": [
+        {
+            "id": "r5bd0ee570ab347c0af336ee7b2ce0ee6",
+            "title": "En los ultimos 3 meses, con que frecuencia has salido?",
+            "type": "Question.Choice",
+            "choices": [],
+            "questionInfo": "{\"Choices\":[{\"Description\":\"Nunca\"},{\"Description\":\"1 a 3 veces\"}],\"ChoiceType\":1}",
+        },
+        {
+            "id": "rff1adf04be3b42f4b9e1e178",
+            "title": "Que te ayudaria mas?",
+            "type": "Question.Choice",
+            "choices": [],
+            "questionInfo": "{\"Choices\":[{\"Description\":\"Mas apoyo\"},{\"Description\":\"Mejor transporte\"}],\"ChoiceType\":2}",
+        },
+    ],
+}
+
 
 def test_extract_microsoft_form_id_from_common_urls():
     assert extract_microsoft_form_id("https://forms.office.com/r/abc123") == "abc123"
+    assert extract_microsoft_form_id("https://forms.cloud.microsoft/e/7S9B6Yur2E?origin=lprLink") == "7S9B6Yur2E"
     assert extract_microsoft_form_id("https://forms.office.com/Pages/ResponsePage.aspx?id=form-id-456") == "form-id-456"
 
 
@@ -53,6 +76,16 @@ def test_import_microsoft_form_from_html_maps_choice_questions():
     assert form.questions[0].type == "checkbox"
     assert form.questions[1].type == "radio"
     assert [option.label for option in form.questions[0].options] == ["Tengo sed", "Tengo frio"]
+
+
+def test_import_microsoft_form_from_runtime_json_maps_question_info_choices():
+    form = import_microsoft_form_from_runtime_json("runtime-form-123", SAMPLE_MICROSOFT_RUNTIME_JSON)
+
+    assert form.title == "CUESTIONARIO SOBRE OCIO Y TIEMPO LIBRE"
+    assert form.questions[0].type == "radio"
+    assert [option.label for option in form.questions[0].options] == ["Nunca", "1 a 3 veces"]
+    assert form.questions[1].type == "checkbox"
+    assert [option.label for option in form.questions[1].options] == ["Mas apoyo", "Mejor transporte"]
 
 
 def test_submit_microsoft_form_posts_answer_payload():
